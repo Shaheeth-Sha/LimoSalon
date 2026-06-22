@@ -1,0 +1,114 @@
+/* FULL SCREEN */
+.container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  font-family: Arial, sans-serif;
+  background: white;
+}
+
+/* LEFT SIDE */
+.left {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: white;
+}
+
+.illustration {
+  width: 80%;
+  max-width: 500px;
+}
+
+/* RIGHT SIDE */
+.right {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #ffffff;
+}
+
+/* CARD */
+.card {
+ / width: 380px;
+  background: #f3cdef;
+  padding: 150px 150px 150px 150px;
+  border-radius: 20px;
+  text-align: center;
+  justify-content: center;
+  align-items: center;
+  
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+}
+
+/* LOGO AREA */
+.logoBox {
+  display: flex;
+  text-align: center;
+  align-items: center;
+  margin-bottom: 50px;
+  gap: 12px;
+  justify-content: center;
+}
+
+.logo {
+  width: 55px;
+  height: 55px;
+ 
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* TITLE */
+.title {
+  font-size: 20px;
+  margin-bottom: 25px;
+  font-weight: bold;
+}
+
+/* INPUT */
+.input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 15px;
+  border-radius: 10px;
+  border: 1px solid #ddd;
+  outline: none;
+}
+
+.input:focus {
+  border-color: #ff4d7d;
+}
+
+/* FORGOT */
+.forgot {
+  text-align: right;
+  font-size: 12px;
+  color: #ff4d7d;
+  margin-bottom: 20px;
+  cursor: pointer;
+}
+
+/* BUTTON */
+.btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #ff2d55;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #e6003d;
+}

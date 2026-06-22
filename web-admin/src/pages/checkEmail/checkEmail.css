@@ -1,0 +1,73 @@
+/* FULL PAGE */
+.container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  font-family: Arial;
+}
+
+/* LEFT SIDE */
+.left {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: white;
+}
+
+.illustration {
+  width: 80%;
+  max-width: 500px;
+}
+
+/* RIGHT SIDE */
+.right {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #fde9f4;
+}
+
+/* CARD */
+.card {
+  width: 420px;
+  background: #fde9f4;
+  padding: 50px 40px;
+  border-radius: 30px;
+  text-align: center;
+}
+
+/* TITLE */
+.title {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 20px;
+}
+
+/* MESSAGE BOX */
+.messageBox {
+  background: #f3f3f3;
+  padding: 20px;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 30px;
+  line-height: 1.5;
+}
+
+/* BUTTON */
+.btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: #ff2d55;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: #e6003d;
+}
