@@ -1,5 +1,16 @@
-import { View, Text, StyleSheet, Image, TextInput, ScrollView } from 'react-native';
+import { 
+  View,
+  Text, 
+  StyleSheet, 
+  Image, 
+  TextInput, 
+  ScrollView, 
+  TouchableOpacity 
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+
+const router = useRouter();
 
 export default function Services() {
   return (
@@ -36,13 +47,16 @@ export default function Services() {
         <View style={styles.grid}>
 
           {/* ITEM */}
-          <View style={styles.card}>
-            <Image
-              source={require('../../../assets/LimoImage/hair.png')}
-              style={styles.cardImage}
-            />
-            <Text style={styles.cardText}>Hair Care</Text>
-          </View>
+        <TouchableOpacity
+  style={styles.card}
+  onPress={() => router.push("/(customer)/(services)/hair")}
+>
+  <Image
+    source={require('../../../assets/LimoImage/hair.png')}
+    style={styles.cardImage}
+  />
+  <Text style={styles.cardText}>Hair Care</Text>
+</TouchableOpacity>
 
           <View style={styles.card}>
             <Image
