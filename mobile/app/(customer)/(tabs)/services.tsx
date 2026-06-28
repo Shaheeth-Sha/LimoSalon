@@ -49,7 +49,15 @@ export default function Services() {
           {/* ITEM */}
         <TouchableOpacity
   style={styles.card}
-  onPress={() => router.push("/(customer)/(services)/hair")}
+  
+  onPress={() =>
+  router.push({
+    pathname: "/(customer)/(services)/hair",
+    params: {
+      selectedServices: JSON.stringify(["hair"]) // or multiple categories
+    }
+  })
+}
 >
   <Image
     source={require('../../../assets/LimoImage/hair.png')}

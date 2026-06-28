@@ -5,25 +5,28 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
 export default function Hair() {
+  const step = 1;
   const router = useRouter();
+
   const [selected, setSelected] = useState<number[]>([]);
+
 
   const services = [
     { id: 1, title: "Hair Cutting & Styling", desc: "A professional trimming or styling of hair based on your preferred look.", time: "30 – 45 minutes", price: 2500 },
     { id: 2, title: "Hair Wash", desc: "Cleanses the scalp and hair while adding softness and shine.", time: "30 minutes", price: 1200 },
     { id: 3, title: "Hair Blow Dry", desc: "Dries and styles hair using a blow dryer for a voluminous finish.", time: "30 – 45 minutes", price: 6000 },
-    { id: 4, title: "Hair Straightening (Temporary)", desc: "Uses heat tools to temporarily straighten hair.", time: "45 – 60 minutes", price: 10000 },
-    { id: 5, title: "Hair Coloring", desc: "Professional hair coloring for a new look.", time: "1.5 – 3 hours", price: 8200 },
-    { id: 6, title: "Hair Highlights", desc: "Adds lighter strands for brightness.", time: "45 – 60 minutes", price: 10000 },
-    { id: 7, title: "Hair Spa Treatment", desc: "Deep nourishment treatment.", time: "30 – 45 minutes", price: 5000 },
-    { id: 8, title: "Oil Massage (Head Massage)", desc: "Improves blood circulation.", time: "30 – 45 minutes", price: 2500 },
-    { id: 9, title: "Keratin Treatment", desc: "Smooths and strengthens hair.", time: "2 – 4 hours", price: 20000 },
+    { id: 4, title: "Hair Straightening (Temporary)", desc: "Uses heat tools to temporarily straighten curly or wavy hair.", time: "45 – 60 minutes", price: 10000 },
+    { id: 5, title: "Hair Coloring", desc: "Changes hair color using professional dyes for a new look.", time: "1.5 – 3 hours", price: 8200 },
+    { id: 6, title: "Hair Highlights", desc: "Adds lighter strands to create dimension and brightness.", time: "45 – 60 minutes", price: 10000 },
+    { id: 7, title: "Hair Spa Treatment", desc: "Deep conditioning treatment that nourishes and repairs damaged hair.", time: "30 – 45 minutes", price: 5000 },
+    { id: 8, title: "Oil Massage (Head Massage)", desc: "Relaxing massage that improves blood circulation and hair health.", time: "30 – 45 minutes", price: 2500 },
+    { id: 9, title: "Keratin Treatment", desc: "Smooths and strengthens hair while reducing frizz.", time: "2 – 4 hours", price: 20000 },
+    { id: 10, title: "Hair Rebonding", desc: "Chemically straightens hair for a sleek long-lasting look.", time: "3 – 5 hours", price: 18000 },
   ];
 
   const toggle = (id: number) => {
@@ -37,35 +40,50 @@ export default function Hair() {
     .reduce((a, b) => a + b.price, 0);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
 
-      {/* HEADER (FIGMA FIXED) */}
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Hair Care Services</Text>
-
-        <View style={{ width: 26 }} />
+        <Text style={styles.headerText}>Hair Care Services</Text>
       </View>
 
-      {/* STEP INDICATOR (IMPORTANT FIX) */}
-      <View style={styles.stepBox}>
-        <Text style={styles.stepText}>
-          Select one or more services to book
-        </Text>
+    {/* STEP NAVIGATION */}
+<View style={styles.stepContainer}>
+  <Text style={styles.stepText}>
+    Select one or more services to book
+  </Text>
 
-        <View style={styles.stepRow}>
-          <View style={styles.stepActive} />
-          <View style={styles.stepDot} />
-          <View style={styles.stepDot} />
-          <View style={styles.stepDot} />
-          <View style={styles.stepDot} />
+  <View style={styles.stepRow}>
+    {[1, 2, 3, 4, 5].map((i) => {
+      const isDone = selected.length > 0 && i === 1;
+      const isActive = selected.length === 0 && i === 1;
+
+      return (
+        <View key={i} style={styles.stepItem}>
+          <View
+            style={[
+              styles.stepCircle,
+              isDone && styles.stepDone,
+              isActive && styles.stepActive,
+            ]}
+          >
+            {isDone && (
+              <Ionicons name="checkmark" size={10} color="#fff" />
+            )}
+          </View>
+
+          {i !== 5 && <View style={styles.stepLine} />}
         </View>
-      </View>
+      );
+    })}
+  </View>
+</View>
 
-      {/* SERVICE LIST */}
+      {/* LIST */}
       <ScrollView showsVerticalScrollIndicator={false}>
 
         {services.map((item) => {
@@ -74,7 +92,7 @@ export default function Hair() {
           return (
             <View
               key={item.id}
-              style={[styles.card, active && styles.cardActive]}
+              style={[styles.card, active && styles.activeCard]}
             >
               <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{item.title}</Text>
@@ -84,7 +102,9 @@ export default function Hair() {
               </View>
 
               <TouchableOpacity
-                onPress={() => toggle(item.id)}
+                onPress={() => {
+                  toggle(item.id);
+                }}
                 style={[styles.btn, active && styles.btnActive]}
               >
                 <Text style={styles.btnText}>
@@ -98,97 +118,119 @@ export default function Hair() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* BOTTOM SUMMARY (FIGMA FIXED) */}
+      {/* BOTTOM */}
       <View style={styles.bottom}>
-        <Text style={styles.bottomText}>
+        <Text style={styles.summaryText}>
           {selected.length} Service selected
         </Text>
 
-        <Text style={styles.bottomPrice}>
+        <Text style={styles.summaryPrice}>
           LKR {total}.00
         </Text>
 
-        <TouchableOpacity style={styles.continue}>
-          <Text style={styles.continueText}>Continue</Text>
-        </TouchableOpacity>
+        <TouchableOpacity
+  style={styles.continue}
+  onPress={() => {
+    if (selected.length === 0) return;
+
+    router.push({
+      pathname: "/(customer)/(services)/hairLength",
+      params: {
+        selectedServices: JSON.stringify(services.filter((s) => selected.includes(s.id))),
+      },
+    });
+  }}
+>
+  <Text style={styles.continueText}>Continue</Text>
+</TouchableOpacity>
       </View>
 
-    </SafeAreaView>
+    </View>
   );
 }
 
-/* ================= FIGMA MATCH STYLES ================= */
+/* ================= STYLES ================= */
 
 const styles = StyleSheet.create({
 
   container: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F5F5F7",
+    paddingTop: 50,
     paddingHorizontal: 16,
-    paddingTop: 10,
   },
 
-  /* HEADER FIX */
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 10,
+    marginBottom: 10,
   },
 
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
+  headerText: {
     fontSize: 18,
     fontWeight: "700",
+    marginLeft: 10,
   },
 
-  /* STEP BOX FIX */
-  stepBox: {
-    backgroundColor: "#ECEFF3",   // IMPORTANT (not white)
-    borderRadius: 18,
-    padding: 12,
+  /* STEP NAV FIGMA */
+  stepContainer: {
+    alignItems: "center",
     marginBottom: 10,
   },
 
   stepText: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 8,
+    fontSize: 13,
+    color: "#777",
+    marginBottom: 10,
+    textAlign: "center",
   },
 
   stepRow: {
     flexDirection: "row",
-    justifyContent: "center",
-    gap: 8,
+    alignItems: "center",
   },
 
-  stepDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 10,
-    backgroundColor: "#C4C4C4",
+  stepItem: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  stepCircle: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#D1D5DB",
   },
 
   stepActive: {
-    width: 10,
-    height: 10,
-    borderRadius: 10,
     backgroundColor: "#FF2D55",
   },
 
-  /* CARD FIX (Figma white cards) */
+  stepDone: {
+    backgroundColor: "#FF2D55",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  stepLine: {
+    width: 25,
+    height: 2,
+    backgroundColor: "#E5E7EB",
+    marginHorizontal: 4,
+  },
+
+  /* CARD */
   card: {
     backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 15,
+    borderRadius: 22,
+    padding: 16,
     marginBottom: 12,
     flexDirection: "row",
   },
 
-  cardActive: {
-    borderColor: "#FF2D55",
+  activeCard: {
     borderWidth: 2,
+    borderColor: "#FF2D55",
   },
 
   title: {
@@ -205,20 +247,20 @@ const styles = StyleSheet.create({
   time: {
     fontSize: 12,
     color: "#999",
-    marginTop: 5,
+    marginTop: 6,
   },
 
   price: {
     fontSize: 14,
     fontWeight: "700",
     color: "#FF2D55",
-    marginTop: 5,
+    marginTop: 6,
   },
 
   btn: {
     backgroundColor: "#FF2D55",
-    paddingHorizontal: 16,
     paddingVertical: 8,
+    paddingHorizontal: 14,
     borderRadius: 20,
     alignSelf: "center",
   },
@@ -233,7 +275,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  /* BOTTOM BAR FIX */
+  /* BOTTOM */
   bottom: {
     position: "absolute",
     bottom: 0,
@@ -245,12 +287,12 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 25,
   },
 
-  bottomText: {
+  summaryText: {
     fontSize: 13,
     fontWeight: "600",
   },
 
-  bottomPrice: {
+  summaryPrice: {
     fontSize: 15,
     fontWeight: "700",
     color: "#FF2D55",
