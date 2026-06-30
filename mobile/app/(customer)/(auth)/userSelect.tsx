@@ -18,7 +18,7 @@ export default function UserSelect() {
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.button}
-        onPress={() => router.push('')}>
+        onPress={() => router.push("/(staff)/home")}>
         <Text style={styles.buttonText}>Staff</Text>
       </TouchableOpacity>
 
