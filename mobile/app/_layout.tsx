@@ -12,7 +12,7 @@ export default function RootLayout() {
      
 
       {/* Main App */}
-      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="(staff)" />
 
     
 
