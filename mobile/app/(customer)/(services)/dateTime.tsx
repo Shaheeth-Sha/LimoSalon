@@ -11,7 +11,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 export default function DateAndTime() {
   const router = useRouter();
-  const { selectedServices, selectedLength } = useLocalSearchParams();
+  const { selectedServices, selectedLength, totalAmount } =
+    useLocalSearchParams();
 
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
@@ -21,7 +22,7 @@ export default function DateAndTime() {
   const getNextDays = () => {
     const days = [];
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < 30; i++) {
       const date = new Date();
       date.setDate(date.getDate() + i);
 
@@ -31,6 +32,7 @@ export default function DateAndTime() {
         month: date.toLocaleString("en-US", { month: "short" }).toUpperCase(),
         day: date.getDate(),
         week: date.toLocaleString("en-US", { weekday: "short" }),
+        isToday: i === 0,
       });
     }
 
@@ -63,14 +65,13 @@ export default function DateAndTime() {
 
       {/* STEP NAVIGATION */}
       <View style={styles.stepContainer}>
-        <Text style={styles.stepText}>
-          Select date and available time
-        </Text>
+        <Text style={styles.stepText}>Select date and available time</Text>
 
         <View style={styles.stepRow}>
           {[1, 2, 3, 4, 5].map((i) => {
             const isDone =
-              i < currentStep || (i === currentStep && selectedDate && selectedTime);
+              i < currentStep ||
+              (i === currentStep && selectedDate && selectedTime);
             const isActive =
               i === currentStep && (!selectedDate || !selectedTime);
 
@@ -96,24 +97,34 @@ export default function DateAndTime() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* DATE CARDS */}
-        <View style={styles.dateRow}>
+        {/* REAL DATE CARDS */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.dateScroll}
+        >
           {dates.map((item) => {
             const active = selectedDate === item.fullDate;
 
             return (
               <TouchableOpacity
                 key={item.id}
-                style={[styles.dateCard, active && styles.dateActive]}
+                style={[
+                  styles.dateCard,
+                  item.isToday && styles.todayCard,
+                  active && styles.dateActive,
+                ]}
                 onPress={() => setSelectedDate(item.fullDate)}
               >
                 <Text style={styles.dateMonth}>{item.month}</Text>
                 <Text style={styles.dateDay}>{item.day}</Text>
                 <Text style={styles.dateWeek}>{item.week}</Text>
+
+                {item.isToday && <Text style={styles.todayText}>Today</Text>}
               </TouchableOpacity>
             );
           })}
-        </View>
+        </ScrollView>
 
         <Text style={styles.sectionTitle}>Available Time</Text>
 
@@ -127,12 +138,7 @@ export default function DateAndTime() {
                 style={[styles.timeBox, active && styles.timeActive]}
                 onPress={() => setSelectedTime(time)}
               >
-                <Text
-                  style={[
-                    styles.timeText,
-                    active && styles.timeTextActive,
-                  ]}
-                >
+                <Text style={[styles.timeText, active && styles.timeTextActive]}>
                   {time}
                 </Text>
               </TouchableOpacity>
@@ -159,6 +165,7 @@ export default function DateAndTime() {
                 selectedLength,
                 selectedDate,
                 selectedTime,
+                totalAmount,
               },
             });
           }}
@@ -236,21 +243,26 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
 
-  dateRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 10,
-    marginBottom: 30,
+  dateScroll: {
+    paddingVertical: 10,
+    paddingRight: 16,
+    marginBottom: 25,
   },
 
   dateCard: {
-    width: "23%",
+    width: 90,
     height: 120,
     backgroundColor: "#D46B91",
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "space-around",
     paddingVertical: 10,
+    marginRight: 12,
+  },
+
+  todayCard: {
+    borderWidth: 2,
+    borderColor: "#FF2D55",
   },
 
   dateActive: {
@@ -272,6 +284,12 @@ const styles = StyleSheet.create({
   dateWeek: {
     color: "#fff",
     fontSize: 13,
+  },
+
+  todayText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "700",
   },
 
   sectionTitle: {

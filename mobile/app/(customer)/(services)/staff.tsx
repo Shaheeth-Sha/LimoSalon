@@ -13,7 +13,7 @@ export default function Staff() {
     const currentStep = 4; // Staff step
   const router = useRouter();
 
-  const { selectedServices, selectedLength, selectedDate, selectedTime } =
+  const { selectedServices, selectedLength, selectedDate, selectedTime, totalAmount } =
     useLocalSearchParams();
 
   const [selectedStaff, setSelectedStaff] = useState("");
@@ -103,6 +103,7 @@ export default function Staff() {
                 selectedDate,
                 selectedTime,
                 selectedStaff,
+                totalAmount// You can calculate the total amount based on selected services and length
               },
             });
           }}
@@ -189,17 +190,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     minHeight: 95,
   },
-  stepContainer: {
-  alignItems: "center",
-  marginBottom: 18,
-},
-
-stepText: {
-  fontSize: 13,
-  color: "#8E8E93",
-  marginBottom: 10,
-  textAlign: "center",
-},
 
   staffActive: {
     backgroundColor: "#FF2D55",

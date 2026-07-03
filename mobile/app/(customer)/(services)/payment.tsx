@@ -11,11 +11,17 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 export default function Payment() {
   const router = useRouter();
-  const params = useLocalSearchParams();
+    const { selectedServices, 
+            selectedLength, 
+            selectedDate, 
+            selectedTime, 
+            selectedStaff, 
+            totalAmount,
+           } = useLocalSearchParams();
 
   const [paymentMethod, setPaymentMethod] = useState("");
 
-  const totalAmount = params.totalAmount ? String(params.totalAmount) : "4500";
+  const total = totalAmount ? String(totalAmount) : "4500";
 
   const methods = [
     {
@@ -85,16 +91,22 @@ export default function Payment() {
           onPress={() => {
             // next frame path
             router.push({
-              pathname: "/(customer)/(services)/paymentSuccess",
+              pathname: "/(customer)/(services)/cardPayment",
               params: {
-                ...params,
-                paymentMethod,
-                totalAmount,
+              
+                selectedServices,
+                selectedLength,
+                selectedDate,
+                selectedTime,
+                selectedStaff,
+                totalAmount: total,
+                paymentMethod: paymentMethod === "card" ? "Credit/Debit Card" : "Pay at Salon",
+
               },
             });
           }}
         >
-          <Text style={styles.payText}>Pay LKR {totalAmount}</Text>
+          <Text style={styles.payText}> Continue </Text>
         </TouchableOpacity>
       </ScrollView>
     </View>

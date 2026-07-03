@@ -18,6 +18,7 @@ export default function ConfirmBooking() {
     selectedDate,
     selectedTime,
     selectedStaff,
+    totalAmount,
   } = useLocalSearchParams();
 
   const services = selectedServices
@@ -31,19 +32,7 @@ export default function ConfirmBooking() {
     olivia: "Olivia Dias",
   };
 
-  const lengthPrices: any = {
-    short: 0,
-    medium: 3500,
-    long: 4500,
-  };
-
-  const serviceTotal = services.reduce(
-    (sum: number, item: any) => sum + Number(item.price),
-    0
-  );
-
-  const lengthPrice = lengthPrices[selectedLength as string] || 0;
-  const total = serviceTotal + lengthPrice;
+  const total = totalAmount ? Number(totalAmount) : 0;
 
   const formatDate = selectedDate
     ? new Date(selectedDate as string).toLocaleDateString("en-US", {
@@ -123,22 +112,22 @@ export default function ConfirmBooking() {
 
       {/* BUTTON */}
       <View style={styles.bottom}>
-         <TouchableOpacity
-  style={styles.continue}
-  onPress={() => {
-    router.push({
-      pathname: "/(customer)/(services)/payment",
-      params: {
-        selectedServices,
-        selectedLength,
-        selectedDate,
-        selectedTime,
-        selectedStaff,
-        totalAmount: String(total),
-      },
-    });
-  }}
->   
+        <TouchableOpacity
+          style={styles.continue}
+          onPress={() => {
+            router.push({
+              pathname: "/(customer)/(services)/payment",
+              params: {
+                selectedServices,
+                selectedLength,
+                selectedDate,
+                selectedTime,
+                selectedStaff,
+                totalAmount: String(total),
+              },
+            });
+          }}
+        >
           <Text style={styles.continueText}>Confirm Booking</Text>
         </TouchableOpacity>
       </View>
