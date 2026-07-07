@@ -133,7 +133,12 @@ export default function HairLength() {
 
       {/* CONTINUE */}
       <TouchableOpacity
-  style={styles.continueBtn}
+      disabled={!selectedLength}
+      style={[
+        styles.continueBtn,
+        !selectedLength && { opacity: 0.5 },
+      ]}
+  
   onPress={() => {
     if (!selectedLength) return;
 
@@ -152,6 +157,7 @@ export default function HairLength() {
         selectedServices: JSON.stringify(services),
         selectedLength: selectedLength,
         totalAmount: String(finalPrice),
+        bookingType: "hair",
       },
     });
   }}

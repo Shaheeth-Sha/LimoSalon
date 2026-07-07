@@ -47,7 +47,7 @@ export default function Services() {
         <View style={styles.grid}>
 
           {/* ITEM */}
-        <TouchableOpacity
+  <TouchableOpacity
   style={styles.card}
   
   onPress={() =>
@@ -66,29 +66,55 @@ export default function Services() {
   <Text style={styles.cardText}>Hair Care</Text>
 </TouchableOpacity>
 
-          <View style={styles.card}>
-            <Image
-              source={require('../../../assets/LimoImage/body.png')}
-              style={styles.cardImage}
-            />
-            <Text style={styles.cardText}>Body Care</Text>
-          </View>
 
-          <View style={styles.card}>
-            <Image
+<TouchableOpacity
+  style={styles.card}
+  onPress={() =>
+    router.push({
+      pathname: "/(customer)/(services)/body",
+      params: {
+        selectedServices: JSON.stringify(["body"]) // or multiple categories
+      }
+    })
+  }
+>
+  <Image
+    source={require('../../../assets/LimoImage/body.png')}
+    style={styles.cardImage}
+  />
+  <Text style={styles.cardText}>Body Care</Text>
+</TouchableOpacity>
+  
+
+      <TouchableOpacity
+         style={styles.card}
+         onPress={() =>
+           router.push({
+             pathname: "/(customer)/(services)/face",
+           })
+         }
+      >
+          <Image
               source={require('../../../assets/LimoImage/face.png')}
               style={styles.cardImage}
             />
             <Text style={styles.cardText}>Face Care</Text>
-          </View>
+      </TouchableOpacity>
 
-          <View style={styles.card}>
-            <Image
+      <TouchableOpacity
+          style={styles.card}
+          onPress={() =>
+            router.push({
+              pathname: "/(customer)/(services)/bridal",
+            })
+          }
+      >
+          <Image
               source={require('../../../assets/LimoImage/bridal.png')}
               style={styles.cardImage}
             />
             <Text style={styles.cardText}>Bridal Dressing</Text>
-          </View>
+      </TouchableOpacity>
 
         </View>
 

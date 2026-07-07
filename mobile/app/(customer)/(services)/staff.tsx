@@ -10,13 +10,26 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 export default function Staff() {
-    const currentStep = 4; // Staff step
   const router = useRouter();
 
-  const { selectedServices, selectedLength, selectedDate, selectedTime, totalAmount } =
-    useLocalSearchParams();
+  const {
+    selectedServices,
+    selectedLength,
+    selectedDate,
+    selectedTime,
+    totalAmount,
+    bookingType,
+  } = useLocalSearchParams();
 
   const [selectedStaff, setSelectedStaff] = useState("");
+
+  const booking = Array.isArray(bookingType) ? bookingType[0] : bookingType;
+  const isHairFlow = booking === "hair";
+
+  
+    
+  const totalSteps = isHairFlow ? 5 : 4;
+  const currentStep = isHairFlow ? 4 : 3;
 
   const staffList = [
     { id: "any", name: "Any Available Users", role: "maximum availability" },
@@ -27,7 +40,6 @@ export default function Staff() {
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
@@ -36,18 +48,18 @@ export default function Staff() {
         <Text style={styles.headerText}>Choose Staff</Text>
       </View>
 
-      {/* STEP NAVIGATION */}
       <View style={styles.stepContainer}>
         <View style={styles.stepRow}>
-          {[1, 2, 3, 4, 5].map((i) => {
-            const isDone = i < 4 || (i === 4 && selectedStaff !== "");
-            const isActive = i === 4 && selectedStaff === "";
+          {Array.from({ length: totalSteps }, (_, index) => index + 1).map((i) => {
+            const isDone = i < currentStep || (i === currentStep && selectedStaff !== "");
+            const isActive = i === currentStep && selectedStaff === "";
 
             return (
               <View key={i} style={styles.stepItem}>
                 <View
                   style={[
                     styles.stepCircle,
+                    !isHairFlow && styles.bodyStepCircle,
                     isDone && styles.stepDone,
                     isActive && styles.stepActive,
                   ]}
@@ -57,7 +69,14 @@ export default function Staff() {
                   )}
                 </View>
 
-                {i !== 5 && <View style={styles.stepLine} />}
+                {i !== totalSteps && (
+                  <View
+                    style={[
+                      styles.stepLine,
+                      !isHairFlow && styles.bodyStepLine,
+                    ]}
+                  />
+                )}
               </View>
             );
           })}
@@ -89,7 +108,6 @@ export default function Staff() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* CONTINUE */}
       <View style={styles.bottom}>
         <TouchableOpacity
           disabled={!selectedStaff}
@@ -103,7 +121,8 @@ export default function Staff() {
                 selectedDate,
                 selectedTime,
                 selectedStaff,
-                totalAmount// You can calculate the total amount based on selected services and length
+                totalAmount,
+                bookingType,
               },
             });
           }}
@@ -140,13 +159,6 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
 
-  stepText: {
-    fontSize: 13,
-    color: "#777",
-    marginBottom: 10,
-    textAlign: "center",
-  },
-
   stepRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -166,6 +178,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
+  bodyStepCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+
   stepDone: {
     backgroundColor: "#FF2D55",
   },
@@ -179,6 +197,11 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: "#E5E7EB",
     marginHorizontal: 4,
+  },
+
+  bodyStepLine: {
+    width: 34,
+    marginHorizontal: 5,
   },
 
   staffCard: {

@@ -129,7 +129,12 @@ export default function Hair() {
         </Text>
 
         <TouchableOpacity
-  style={styles.continue}
+        disabled={selected.length === 0}
+        style={[
+          styles.continue,
+          selected.length === 0 && { opacity: 0.5 },
+        ]}
+  
   onPress={() => {
     if (selected.length === 0) return;
 
@@ -137,6 +142,7 @@ export default function Hair() {
       pathname: "/(customer)/(services)/hairLength",
       params: {
         selectedServices: JSON.stringify(services.filter((s) => selected.includes(s.id))),
+        bookingType: "hair",
       },
     });
   }}

@@ -11,13 +11,17 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 
 export default function DateAndTime() {
   const router = useRouter();
-  const { selectedServices, selectedLength, totalAmount } =
+  const { selectedServices, selectedLength, totalAmount,bookingType } =
     useLocalSearchParams();
 
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
 
-  const currentStep = 3;
+  const booking = Array.isArray(bookingType) ? bookingType[0] : bookingType;
+  const isHairFlow = booking === "hair";
+  
+  const totalSteps = isHairFlow ? 5 : 4;
+  const currentStep = isHairFlow ? 3 : 2;
 
   const getNextDays = () => {
     const days = [];
@@ -68,7 +72,7 @@ export default function DateAndTime() {
         <Text style={styles.stepText}>Select date and available time</Text>
 
         <View style={styles.stepRow}>
-          {[1, 2, 3, 4, 5].map((i) => {
+          {Array.from({ length: totalSteps }, (_, index) => index + 1).map((i) => {
             const isDone =
               i < currentStep ||
               (i === currentStep && selectedDate && selectedTime);
@@ -80,6 +84,7 @@ export default function DateAndTime() {
                 <View
                   style={[
                     styles.stepCircle,
+                    !isHairFlow && styles.bodyStepCircle,
                     isDone && styles.stepDone,
                     isActive && styles.stepActive,
                   ]}
@@ -89,7 +94,13 @@ export default function DateAndTime() {
                   )}
                 </View>
 
-                {i !== 5 && <View style={styles.stepLine} />}
+                {i !== totalSteps && (
+                     <View
+                      style={[styles.stepLine,
+                        !isHairFlow && styles.bodyStepLine,
+                      ]}
+                       />
+                    )}
               </View>
             );
           })}
@@ -166,6 +177,7 @@ export default function DateAndTime() {
                 selectedDate,
                 selectedTime,
                 totalAmount,
+                bookingType,
               },
             });
           }}
@@ -226,6 +238,17 @@ const styles = StyleSheet.create({
     backgroundColor: "#D1D5DB",
     justifyContent: "center",
     alignItems: "center",
+  },
+
+  bodyStepCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+
+  bodyStepLine: {
+    width: 34,
+    marginHorizontal: 5,
   },
 
   stepActive: {

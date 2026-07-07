@@ -3,19 +3,17 @@ import { useState } from "react";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-const API_URL = "http://10.0.2.2:5000/api/customers/send-otp";
+const API_URL = "http://10.0.2.2:5000/api/customers/verify-otp";
 
-export default function PhoneVerification() {
+export default function VerifyOtp() {
   const router = useRouter();
-  const { phone: registeredPhone } = useLocalSearchParams();
+  const { phone } = useLocalSearchParams();
 
-  const [phone, setPhone] = useState(
-    typeof registeredPhone === "string" ? registeredPhone : "+94 "
-  );
+  const [otp, setOtp] = useState("");
 
-  const sendOtp = async () => {
-    if (!phone || phone.replace(/\D/g, "").length !== 11) {
-      Alert.alert("Error", "Enter valid Sri Lankan phone number");
+  const verifyOtp = async () => {
+    if (otp.length !== 6) {
+      Alert.alert("Error", "Enter 6 digit OTP");
       return;
     }
 
@@ -23,22 +21,29 @@ export default function PhoneVerification() {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify({
+          phone,
+          otp,
+        }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        Alert.alert("Error", data.message || "OTP sending failed");
+        Alert.alert("Error", data.message || "OTP verification failed");
         return;
       }
 
-      Alert.alert("Success", "OTP sent successfully");
-
-      router.push({
-        pathname: "/(customer)/(auth)/VerifyOtp",
-        params: { phone },
-      });
+      Alert.alert(
+        "Account Created Successfully",
+        "Your phone number has been verified. You can now login.",
+        [
+          {
+            text: "Continue",
+            onPress: () => router.replace("/(customer)/(auth)/login"),
+          },
+        ]
+      );
     } catch (error) {
       Alert.alert("Error", "Cannot connect to backend");
     }
@@ -55,20 +60,33 @@ export default function PhoneVerification() {
         <Ionicons name="phone-portrait-outline" size={60} color="#333" />
         <Text style={styles.heading}>Phone Verification</Text>
         <Text style={styles.subText}>
-          We will send you a one-time password to verify your phone number
+          Enter the 6 digit code sent to{"\n"}
+          {String(phone)}
         </Text>
       </View>
 
       <TextInput
-        value={phone}
-        onChangeText={setPhone}
-        placeholder="+94"
-        keyboardType="phone-pad"
-        style={styles.input}
+        value={otp}
+        onChangeText={(text) => setOtp(text.replace(/\D/g, "").slice(0, 6))}
+        keyboardType="number-pad"
+        maxLength={6}
+        placeholder="Enter OTP"
+        style={styles.otpInput}
       />
 
-      <TouchableOpacity style={styles.button} onPress={sendOtp}>
-        <Text style={styles.buttonText}>Send OTP</Text>
+      <TouchableOpacity style={styles.button} onPress={verifyOtp}>
+        <Text style={styles.buttonText}>Verify OTP</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() =>
+          router.replace({
+            pathname: "/(customer)/(auth)/PhoneVerification",
+            params: { phone },
+          })
+        }
+      >
+        <Text style={styles.changeText}>Change phone number</Text>
       </TouchableOpacity>
     </View>
   );
@@ -106,11 +124,11 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 30,
     alignItems: "center",
-    marginBottom: 45,
+    marginBottom: 35,
   },
 
   heading: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "bold",
     color: "#fff",
     marginTop: 15,
@@ -123,13 +141,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  input: {
+  otpInput: {
     borderWidth: 1,
-    borderColor: "#ddd",
+    borderColor: "#FF2D75",
     borderRadius: 10,
     padding: 14,
+    fontSize: 22,
+    textAlign: "center",
+    letterSpacing: 8,
     marginBottom: 30,
-    fontSize: 15,
   },
 
   button: {
@@ -142,6 +162,13 @@ const styles = StyleSheet.create({
   buttonText: {
     color: "#fff",
     fontSize: 16,
+    fontWeight: "600",
+  },
+
+  changeText: {
+    textAlign: "center",
+    color: "#FF2D75",
+    marginTop: 25,
     fontWeight: "600",
   },
 });

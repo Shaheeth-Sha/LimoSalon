@@ -3,6 +3,7 @@ const cors = require("cors");
 require("dotenv").config();
 
 const connectDB = require("./config/db");
+const customerRoutes = require("./routes/customerRoutes");
 
 const app = express();
 
@@ -17,6 +18,8 @@ connectDB();
 app.get("/", (req, res) => {
   res.send("LimoSalon backend is running");
 });
+
+app.use("/api/customers", customerRoutes);
 
 const PORT = process.env.PORT || 5000;
 

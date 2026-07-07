@@ -19,11 +19,18 @@ export default function ConfirmBooking() {
     selectedTime,
     selectedStaff,
     totalAmount,
+    bookingType,
   } = useLocalSearchParams();
 
   const services = selectedServices
     ? JSON.parse(selectedServices as string)
     : [];
+
+    const booking = Array.isArray(bookingType) ? bookingType[0] : bookingType;
+    const isHairFlow = booking === "hair";
+  
+  const totalSteps = isHairFlow ? 5 : 4;
+  const currentStep = isHairFlow ? 5 : 4;   
 
   const staffNames: any = {
     any: "Any Available Staff",
@@ -44,7 +51,6 @@ export default function ConfirmBooking() {
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
@@ -53,18 +59,30 @@ export default function ConfirmBooking() {
         <Text style={styles.headerText}>Confirm Booking</Text>
       </View>
 
-      {/* STEP NAVIGATION */}
       <View style={styles.stepContainer}>
         <Text style={styles.stepText}>Review and confirm your booking</Text>
 
         <View style={styles.stepRow}>
-          {[1, 2, 3, 4, 5].map((i) => (
+          {Array.from({ length: totalSteps }, (_, index) => index + 1).map((i) => (
             <View key={i} style={styles.stepItem}>
-              <View style={[styles.stepCircle, styles.stepDone]}>
+              <View
+                style={[
+                  styles.stepCircle,
+                  !isHairFlow && styles.bodyStepCircle,
+                  styles.stepDone,
+                ]}
+              >
                 <Ionicons name="checkmark" size={10} color="#fff" />
               </View>
 
-              {i !== 5 && <View style={styles.stepLine} />}
+              {i !== totalSteps && (
+                <View
+                  style={[
+                    styles.stepLine,
+                    !isHairFlow && styles.bodyStepLine,
+                  ]}
+                />
+              )}
             </View>
           ))}
         </View>
@@ -110,7 +128,6 @@ export default function ConfirmBooking() {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* BUTTON */}
       <View style={styles.bottom}>
         <TouchableOpacity
           style={styles.continue}
@@ -124,6 +141,7 @@ export default function ConfirmBooking() {
                 selectedTime,
                 selectedStaff,
                 totalAmount: String(total),
+                bookingType,
               },
             });
           }}
@@ -186,6 +204,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
+  bodyStepCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+  },
+
   stepDone: {
     backgroundColor: "#FF2D55",
   },
@@ -195,6 +219,11 @@ const styles = StyleSheet.create({
     height: 2,
     backgroundColor: "#E5E7EB",
     marginHorizontal: 4,
+  },
+
+  bodyStepLine: {
+    width: 34,
+    marginHorizontal: 5,
   },
 
   confirmCard: {

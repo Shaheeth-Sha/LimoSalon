@@ -1,69 +1,106 @@
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Alert } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useState } from 'react';
+
+// Backend login API
+const API_URL = "http://10.0.2.2:5000/api/customers/login";
 
 export default function Login() {
+  // Store input values
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  // Show/hide password
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Runs when Log In button is pressed
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Error", "Please enter email and password");
+      return;
+    }
+
+    try {
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        Alert.alert("Error", data.message || "Login failed");
+        return;
+      }
+
+      Alert.alert("Success", "Login successful");
+      router.replace('/(customer)/(tabs)/home');
+    } catch (error) {
+      Alert.alert("Error", "Cannot connect to backend");
+    }
+  };
+
   return (
     <View style={styles.container}>
-
-      {/* Card */}
       <View style={styles.card}>
 
-        {/* Logo + Title */}
         <View style={styles.logoRow}>
-          <Image
-            source={require('../../../assets/LimoIcon/logo.png')}
-            style={styles.logo}
-          />
+          <Image source={require('../../../assets/LimoIcon/logo.png')} style={styles.logo} />
           <Text style={styles.logoText}>LIMO{"\n"}SALON</Text>
         </View>
 
-        {/* Welcome Text */}
         <Text style={styles.heading}>Welcome Back</Text>
-        <Text style={styles.subheading}>
-          Sign in to book your next appointment
-        </Text>
+        <Text style={styles.subheading}>Sign in to book your next appointment</Text>
 
-        {/* Input Fields */}
         <TextInput
           placeholder="Email"
           style={styles.input}
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
         />
 
-        <TextInput
-          placeholder="Password"
-          secureTextEntry
-          style={styles.input}
-        />
+        <View style={styles.passwordBox}>
+          <TextInput
+            placeholder="Password"
+            secureTextEntry={!showPassword}
+            style={styles.passwordInput}
+            value={password}
+            onChangeText={setPassword}
+          />
 
-        {/* Forgot Password */}
+          <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+            <Feather name={showPassword ? "eye" : "eye-off"} size={18} color="#999" />
+          </TouchableOpacity>
+        </View>
+
         <Text style={styles.forgot}>Forgot password?</Text>
 
-        {/* Login Button */}
-        <TouchableOpacity style={styles.loginBtn}
-        onPress={() => router.replace('/(customer)/(tabs)/home')}>
+        <TouchableOpacity style={styles.loginBtn} onPress={handleLogin}>
           <Text style={styles.loginText}>Log In</Text>
         </TouchableOpacity>
 
-        {/* Divider */}
         <View style={styles.dividerRow}>
           <View style={styles.line} />
           <Text style={styles.orText}>or continue with</Text>
           <View style={styles.line} />
         </View>
 
-        {/* Google Button */}
         <TouchableOpacity style={styles.googleBtn}>
           <Text style={styles.googleText}>Google</Text>
         </TouchableOpacity>
 
-        {/* Register */}
         <Text style={styles.registerText}>
-          Don't have an account? <Text style={styles.register}
-           onPress={() => router.push('/(customer)/(auth)/register')}>Register</Text>
+          Don't have an account?{" "}
+          <Text style={styles.register} onPress={() => router.push('/(customer)/(auth)/register')}>
+            Register
+          </Text>
         </Text>
 
       </View>
-
     </View>
   );
 }
@@ -135,6 +172,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#ff1744',
   },
+   
+  passwordBox: {
+  width: '100%',
+  backgroundColor: '#f5f5f5',
+  borderRadius: 10,
+  paddingHorizontal: 12,
+  marginTop: 10,
+  flexDirection: 'row',
+  alignItems: 'center',
+},
+
+passwordInput: {
+  flex: 1,
+  paddingVertical: 12,
+  fontSize: 14,
+},
 
   /* Login Button */
   loginBtn: {
