@@ -5,42 +5,174 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+const BOOKING_API = "http://10.0.2.2:5000/api/bookings";
 
 export default function Payment() {
   const router = useRouter();
-    const { selectedServices, 
-            selectedLength, 
-            selectedDate, 
-            selectedTime, 
-            selectedStaff, 
-            totalAmount,
-           } = useLocalSearchParams();
+
+  const {
+    selectedServices,
+    selectedLength,
+    selectedDate,
+    selectedTime,
+    selectedStaff,
+    totalAmount,
+    bookingType,
+  } = useLocalSearchParams();
 
   const [paymentMethod, setPaymentMethod] = useState("");
 
-  const total = totalAmount ? String(totalAmount) : "4500";
+  const total = totalAmount ? Number(totalAmount) : 0;
+  const booking = Array.isArray(bookingType) ? bookingType[0] : bookingType;
+
+  const services = selectedServices
+    ? JSON.parse(selectedServices as string)
+    : [];
+
+  const hairLength = selectedLength
+    ? JSON.parse(selectedLength as string)
+    : null;
+
+  const staff = selectedStaff
+    ? JSON.parse(selectedStaff as string)
+    : null;
+
+  const advancePayment =
+    booking === "bridal"
+      ? total * 0.2
+      : total > 10000
+      ? total * 0.1
+      : 0;
+
+  const paymentRequired = advancePayment > 0;
 
   const methods = [
     {
       id: "card",
       title: "Credit/Debit Card",
-      sub: "Visa, Master Card, Amex",
+      sub: paymentRequired
+        ? `Advance required: LKR ${advancePayment}`
+        : "Visa, Master Card, Amex",
       icon: "card-outline",
     },
     {
       id: "salon",
       title: "Pay at Salon",
-      sub: "Physically",
+      sub: paymentRequired ? "Unavailable for this booking" : "Physically",
       icon: "cash-outline",
     },
   ];
 
+  const createPayAtSalonBooking = async () => {
+    try {
+      const token = await AsyncStorage.getItem("customerToken");
+
+      if (!token) {
+        Alert.alert("Error", "Please login again");
+        return;
+      }
+
+      const res = await fetch(BOOKING_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          services: services.map((item: any) => ({
+            serviceId: item._id,
+            name: item.name,
+            price: item.price,
+            duration: item.duration,
+            durationText: item.durationText,
+          })),
+          hairLength: hairLength
+            ? {
+                hairLengthId: hairLength._id,
+                name: hairLength.name,
+                description: hairLength.description,
+                extraPrice: hairLength.extraPrice,
+              }
+            : null,
+          staff: staff
+            ? {
+                staffId: staff._id,
+                name: staff.name,
+                role: staff.role,
+              }
+            : null,
+          selectedDate: String(selectedDate),
+          selectedTime: String(selectedTime),
+          totalAmount: total,
+          bookingType: String(booking),
+          paymentMethod: "Pay at Salon",
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        Alert.alert("Error", data.message || "Booking failed");
+        return;
+      }
+
+      router.replace({
+        pathname: "/(customer)/(services)/bookingSuccess",
+        params: {
+          bookingId: data.booking?._id,
+          selectedServices,
+          selectedLength,
+          selectedDate,
+          selectedTime,
+          selectedStaff,
+          totalAmount: String(total),
+          paymentMethod: "Pay at Salon",
+          bookingType: String(booking),
+        },
+      });
+    } catch (error) {
+      Alert.alert("Error", "Cannot create booking");
+    }
+  };
+
+  const handleContinue = () => {
+    if (!paymentMethod) return;
+
+    if (paymentMethod === "salon") {
+      if (paymentRequired) {
+        Alert.alert("Payment Required", "Advance payment is required for this booking.");
+        return;
+      }
+
+      createPayAtSalonBooking();
+      return;
+    }
+
+    router.push({
+      pathname: "/(customer)/(services)/cardPayment",
+      params: {
+        selectedServices,
+        selectedLength,
+        selectedDate,
+        selectedTime,
+        selectedStaff,
+        totalAmount: String(total),
+        advancePayment: String(advancePayment),
+        paymentRequired: String(paymentRequired),
+        bookingType: String(booking),
+        paymentMethod: "Credit/Debit Card",
+      },
+    });
+  };
+
   return (
     <View style={styles.container}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
@@ -56,11 +188,17 @@ export default function Payment() {
 
         {methods.map((item) => {
           const active = paymentMethod === item.id;
+          const disabled = item.id === "salon" && paymentRequired;
 
           return (
             <TouchableOpacity
               key={item.id}
-              style={[styles.paymentCard, active && styles.paymentActive]}
+              disabled={disabled}
+              style={[
+                styles.paymentCard,
+                active && styles.paymentActive,
+                disabled && { opacity: 0.45 },
+              ]}
               onPress={() => setPaymentMethod(item.id)}
             >
               <View style={[styles.radio, active && styles.radioActive]} />
@@ -81,32 +219,26 @@ export default function Payment() {
         })}
 
         <View style={styles.amountRow}>
-          <Text style={styles.amountLabel}>Total Amount</Text>
-          <Text style={styles.amountValue}>LKR {totalAmount}</Text>
+          <Text style={styles.amountLabel}>
+            {paymentRequired ? "Advance Payment" : "Total Amount"}
+          </Text>
+          <Text style={styles.amountValue}>
+            LKR {paymentRequired ? advancePayment : total}
+          </Text>
         </View>
+
+        {paymentRequired && (
+          <Text style={{ marginTop: 12, color: "#777", textAlign: "right" }}>
+            Total Amount: LKR {total}
+          </Text>
+        )}
 
         <TouchableOpacity
           disabled={!paymentMethod}
           style={[styles.payBtn, !paymentMethod && { opacity: 0.5 }]}
-          onPress={() => {
-            // next frame path
-            router.push({
-              pathname: "/(customer)/(services)/cardPayment",
-              params: {
-              
-                selectedServices,
-                selectedLength,
-                selectedDate,
-                selectedTime,
-                selectedStaff,
-                totalAmount: total,
-                paymentMethod: paymentMethod === "card" ? "Credit/Debit Card" : "Pay at Salon",
-
-              },
-            });
-          }}
+          onPress={handleContinue}
         >
-          <Text style={styles.payText}> Continue </Text>
+          <Text style={styles.payText}>Continue</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>

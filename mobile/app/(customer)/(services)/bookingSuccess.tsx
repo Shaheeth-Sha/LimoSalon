@@ -7,12 +7,14 @@ export default function BookingSuccess() {
   const router = useRouter();
 
   const {
+    bookingId,
     selectedServices,
     selectedLength,
     selectedDate,
     selectedTime,
     selectedStaff,
     totalAmount,
+    advancePayment,
     paymentMethod,
   } = useLocalSearchParams();
 
@@ -20,20 +22,21 @@ export default function BookingSuccess() {
     ? JSON.parse(selectedServices as string)
     : [];
 
-  const serviceNames = services.length ? services.map((item: any) => item.title).join(", ") : "-" ;
-  
-  const lengthNames: any = {
-    short: "Short Hair",
-    medium: "Medium Hair",
-    long: "Long Hair",
-  };
+  const hairLength = selectedLength
+    ? JSON.parse(selectedLength as string)
+    : null;
 
-  const staffNames: any = {
-    any: "Any Available Staff",
-    nimesha: "Nimesha Fernando",
-    rashmi: "Rashmi W.",
-    olivia: "Olivia Dias",
-  };
+  const staff = selectedStaff
+    ? JSON.parse(selectedStaff as string)
+    : null;
+
+  const total = totalAmount ? Number(totalAmount) : 0;
+  const advance = advancePayment ? Number(advancePayment) : 0;
+  const balance = total - advance;
+
+  const serviceNames = services.length
+    ? services.map((item: any) => item.name).join(" & ")
+    : "-";
 
   const formatDate = selectedDate
     ? new Date(selectedDate as string).toLocaleDateString("en-US", {
@@ -56,7 +59,9 @@ export default function BookingSuccess() {
         <View style={styles.row}>
           <Text style={styles.label}>Booking ID</Text>
           <Text style={styles.colon}>:</Text>
-          <Text style={styles.value}>#GLW_9895</Text>
+          <Text style={styles.value}>
+            {bookingId ? `#${String(bookingId).slice(-6).toUpperCase()}` : "-"}
+          </Text>
         </View>
 
         <View style={styles.row}>
@@ -65,11 +70,13 @@ export default function BookingSuccess() {
           <Text style={styles.value}>{serviceNames}</Text>
         </View>
 
-        <View style={styles.row}>
-          <Text style={styles.label}>Length</Text>
-          <Text style={styles.colon}>:</Text>
-          <Text style={styles.value}>{selectedLength}</Text>
-        </View>
+        {hairLength && (
+          <View style={styles.row}>
+            <Text style={styles.label}>Length</Text>
+            <Text style={styles.colon}>:</Text>
+            <Text style={styles.value}>{hairLength.name}</Text>
+          </View>
+        )}
 
         <View style={styles.row}>
           <Text style={styles.label}>Date & Time</Text>
@@ -84,20 +91,32 @@ export default function BookingSuccess() {
           <Text style={styles.label}>Stylist</Text>
           <Text style={styles.colon}>:</Text>
           <Text style={styles.value}>
-            {staffNames[selectedStaff as string] || "Any Available Staff"}
+            {staff?.name || "Any Available Staff"}
           </Text>
         </View>
 
         <View style={styles.row}>
           <Text style={styles.label}>Pay Via</Text>
           <Text style={styles.colon}>:</Text>
-          <Text style={styles.value}>{paymentMethod}</Text>
+          <Text style={styles.value}>{paymentMethod || "-"}</Text>
         </View>
 
         <View style={styles.row}>
           <Text style={styles.label}>Total</Text>
           <Text style={styles.colon}>:</Text>
-          <Text style={styles.value}>LKR {totalAmount}</Text>
+          <Text style={styles.value}>LKR {total}</Text>
+        </View>
+
+        <View style={styles.row}>
+          <Text style={styles.label}>Advanced Payment</Text>
+          <Text style={styles.colon}>:</Text>
+          <Text style={styles.value}>LKR {advance}</Text>
+        </View>
+
+        <View style={styles.row}>
+          <Text style={styles.label}>Balance Payment</Text>
+          <Text style={styles.colon}>:</Text>
+          <Text style={styles.value}>LKR {balance}</Text>
         </View>
       </View>
 
@@ -116,7 +135,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F5F5F7",
     alignItems: "center",
-    paddingTop: 90,
+    paddingTop: 70,
     paddingHorizontal: 24,
   },
 
@@ -154,17 +173,18 @@ const styles = StyleSheet.create({
 
   row: {
     flexDirection: "row",
-    marginBottom: 18,
+    marginBottom: 16,
   },
 
   label: {
-    width: 95,
+    width: 115,
     fontSize: 14,
+    fontWeight: "700",
     color: "#111",
   },
 
   colon: {
-    width: 20,
+    width: 18,
     fontSize: 14,
     color: "#111",
   },
@@ -172,6 +192,7 @@ const styles = StyleSheet.create({
   value: {
     flex: 1,
     fontSize: 14,
+    fontWeight: "600",
     color: "#111",
   },
 

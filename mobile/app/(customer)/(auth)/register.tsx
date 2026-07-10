@@ -14,7 +14,7 @@ import { Ionicons, Feather } from "@expo/vector-icons";
 import { useState } from "react";
 import { useRouter } from "expo-router";
 
-const API_URL = "http://10.0.2.2:5000/api/customers/register";
+
 
 export default function Register() {
   const router = useRouter();
@@ -114,32 +114,15 @@ export default function Register() {
   const handleRegister = async () => {
     if (!validate()) return;
 
-    try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `${firstName} ${lastName}`,
-          email: email.toLowerCase(),
-          phone,
-          password,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        Alert.alert("Error", data.message || "Registration failed");
-        return;
-      }
-
-      router.push({
-        pathname: "/(customer)/(auth)/PhoneVerification",
-        params: { phone },
-      });
-    } catch (error) {
-      Alert.alert("Error", "Cannot connect to backend");
-    }
+    router.push({
+      pathname: "/(customer)/(auth)/PhoneVerification",
+      params: {
+        name: `${firstName} ${lastName}`,
+        email: email.toLowerCase(),
+        phone,
+        password,
+      },
+    });
   };
 
   return (

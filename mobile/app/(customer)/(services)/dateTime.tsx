@@ -172,12 +172,12 @@ export default function DateAndTime() {
             router.push({
               pathname: "/(customer)/(services)/staff",
               params: {
-                selectedServices,
-                selectedLength,
-                selectedDate,
-                selectedTime,
-                totalAmount,
-                bookingType,
+                selectedServices: String(selectedServices),
+                selectedLength: String(selectedLength),
+                selectedDate: String(selectedDate),
+                selectedTime: String(selectedTime),
+                totalAmount: String(totalAmount),
+                bookingType: String(bookingType),
               },
             });
           }}

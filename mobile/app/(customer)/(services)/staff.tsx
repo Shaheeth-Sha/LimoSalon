@@ -1,13 +1,27 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+
+const STAFF_API = "http://10.0.2.2:5000/api/staff?category=Hair";
+
+type StaffItem = {
+  _id: string;
+  name: string;
+  role: string;
+  category?: string;
+  experience?: number;
+  rating?: number;
+  image?: string;
+  available?: boolean;
+};
 
 export default function Staff() {
   const router = useRouter();
@@ -22,21 +36,41 @@ export default function Staff() {
   } = useLocalSearchParams();
 
   const [selectedStaff, setSelectedStaff] = useState("");
+  const [staffList, setStaffList] = useState<StaffItem[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const booking = Array.isArray(bookingType) ? bookingType[0] : bookingType;
   const isHairFlow = booking === "hair";
 
-  
-    
   const totalSteps = isHairFlow ? 5 : 4;
   const currentStep = isHairFlow ? 4 : 3;
 
-  const staffList = [
-    { id: "any", name: "Any Available Users", role: "maximum availability" },
-    { id: "nimesha", name: "Nimesha Fernando", role: "Senior Stylist" },
-    { id: "rashmi", name: "Rashmi W.", role: "junior Stylist" },
-    { id: "olivia", name: "Olivia Dias", role: "Massage Therephist" },
-  ];
+  useEffect(() => {
+    const loadStaff = async () => {
+      try {
+        const res = await fetch(STAFF_API);
+        const data = await res.json();
+
+        if (res.ok) {
+          const anyStaff: StaffItem = {
+            _id: "any",
+            name: "Any Available Staff",
+            role: "maximum availability",
+          };
+
+          setStaffList([anyStaff, ...data.staff]);
+        }
+      } catch (error) {
+        console.log("Staff load failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadStaff();
+  }, []);
+
+  const selectedStaffData = staffList.find((item) => item._id === selectedStaff);
 
   return (
     <View style={styles.container}>
@@ -51,7 +85,8 @@ export default function Staff() {
       <View style={styles.stepContainer}>
         <View style={styles.stepRow}>
           {Array.from({ length: totalSteps }, (_, index) => index + 1).map((i) => {
-            const isDone = i < currentStep || (i === currentStep && selectedStaff !== "");
+            const isDone =
+              i < currentStep || (i === currentStep && selectedStaff !== "");
             const isActive = i === currentStep && selectedStaff === "";
 
             return (
@@ -83,46 +118,52 @@ export default function Staff() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {staffList.map((item) => {
-          const active = selectedStaff === item.id;
+      {loading ? (
+        <ActivityIndicator size="large" color="#FF2D55" style={{ marginTop: 40 }} />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {staffList.map((item) => {
+            const active = selectedStaff === item._id;
 
-          return (
-            <TouchableOpacity
-              key={item.id}
-              style={[styles.staffCard, active && styles.staffActive]}
-              onPress={() => setSelectedStaff(item.id)}
-            >
-              <Ionicons name="person-outline" size={42} color="#111" />
+            return (
+              <TouchableOpacity
+                key={item._id}
+                style={[styles.staffCard, active && styles.staffActive]}
+                onPress={() => setSelectedStaff(item._id)}
+              >
+                <Ionicons name="person-outline" size={42} color="#111" />
 
-              <View style={styles.staffTextBox}>
-                <Text style={styles.staffName}>{item.name}</Text>
-                <Text style={styles.staffRole}>{item.role}</Text>
-              </View>
+                <View style={styles.staffTextBox}>
+                  <Text style={styles.staffName}>{item.name}</Text>
+                  <Text style={styles.staffRole}>{item.role}</Text>
+                </View>
 
-              <View style={[styles.radio, active && styles.radioActive]} />
-            </TouchableOpacity>
-          );
-        })}
+                <View style={[styles.radio, active && styles.radioActive]} />
+              </TouchableOpacity>
+            );
+          })}
 
-        <View style={{ height: 120 }} />
-      </ScrollView>
+          <View style={{ height: 120 }} />
+        </ScrollView>
+      )}
 
       <View style={styles.bottom}>
         <TouchableOpacity
           disabled={!selectedStaff}
           style={[styles.continue, !selectedStaff && { opacity: 0.5 }]}
           onPress={() => {
+            if (!selectedStaffData) return;
+
             router.push({
               pathname: "/(customer)/(services)/confirm",
               params: {
-                selectedServices,
-                selectedLength,
-                selectedDate,
-                selectedTime,
-                selectedStaff,
-                totalAmount,
-                bookingType,
+                selectedServices: String(selectedServices),
+                selectedLength: String(selectedLength),
+                selectedDate: String(selectedDate),
+                selectedTime: String(selectedTime),
+                selectedStaff: JSON.stringify(selectedStaffData),
+                totalAmount: String(totalAmount),
+                bookingType: String(bookingType),
               },
             });
           }}

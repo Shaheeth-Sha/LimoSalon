@@ -1,7 +1,16 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+
+const HAIR_LENGTH_API = "http://10.0.2.2:5000/api/hair-lengths";
+
+type HairLengthItem = {
+  _id: string;
+  name: string;
+  description: string;
+  extraPrice: number;
+};
 
 export default function HairLength() {
   const router = useRouter();
@@ -12,44 +21,41 @@ export default function HairLength() {
     : [];
 
   const [selectedLength, setSelectedLength] = useState("");
+  const [hairLengths, setHairLengths] = useState<HairLengthItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadHairLengths = async () => {
+      try {
+        const res = await fetch(HAIR_LENGTH_API);
+        const data = await res.json();
+
+        if (res.ok) {
+          setHairLengths(data.hairLengths);
+        }
+      } catch (error) {
+        console.log("Hair lengths load failed:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadHairLengths();
+  }, []);
 
   const basePrice = services.reduce(
     (total: number, item: any) => total + Number(item.price || 0),
     0
   );
 
-  const getExtraPrice = (length: string) => {
-    if (length === "medium") return 1000;
-    if (length === "long") return 2000;
-    return 0;
-  };
+  const selectedHairLength = hairLengths.find(
+    (item) => item._id === selectedLength
+  );
 
-  const finalPrice = basePrice + getExtraPrice(selectedLength);
-
-  const hairLengths = [
-    {
-      id: "short",
-      label: "Short Hair",
-      desc: "Above shoulder",
-      extra: 0,
-    },
-    {
-      id: "medium",
-      label: "Medium Hair",
-      desc: "Shoulder length",
-      extra: 1000,
-    },
-    {
-      id: "long",
-      label: "Long Hair",
-      desc: "Below shoulder",
-      extra: 2000,
-    },
-  ];
+  const finalPrice = basePrice + Number(selectedHairLength?.extraPrice || 0);
 
   return (
     <View style={styles.container}>
-      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
@@ -58,7 +64,6 @@ export default function HairLength() {
         <Text style={styles.title}>Hair Length</Text>
       </View>
 
-      {/* STEP NAVIGATION */}
       <View style={styles.stepContainer}>
         <Text style={styles.stepText}>Select one or more services to book</Text>
 
@@ -88,7 +93,6 @@ export default function HairLength() {
         </View>
       </View>
 
-      {/* SELECTED SERVICES */}
       <Text style={styles.sectionTitle}>Selected Services</Text>
 
       {services.length === 0 ? (
@@ -96,74 +100,64 @@ export default function HairLength() {
       ) : (
         services.map((item: any, index: number) => (
           <View key={index} style={styles.serviceCard}>
-            <Text style={styles.serviceName}>{item.title}</Text>
-            <Text style={styles.servicePrice}>LKR {item.price}</Text>
+            <Text style={styles.serviceName}>{item.name}</Text>
+            <Text style={styles.serviceTime}>
+              {item.durationText || `${item.duration} minutes`}
+            </Text>
+            <Text style={styles.servicePrice}>
+              LKR {Number(item.price).toLocaleString()}
+            </Text>
           </View>
         ))
       )}
 
-      {/* HAIR LENGTH OPTIONS */}
       <Text style={styles.sectionTitle}>Select Hair Length</Text>
 
-      {hairLengths.map((item) => {
-        const totalPrice = basePrice + item.extra;
-
-        return (
+      {loading ? (
+        <ActivityIndicator size="large" color="#ff2d55" />
+      ) : (
+        hairLengths.map((item) => (
           <TouchableOpacity
-            key={item.id}
-            onPress={() => setSelectedLength(item.id)}
+            key={item._id}
+            onPress={() => setSelectedLength(item._id)}
             style={[
               styles.lengthCard,
-              selectedLength === item.id && styles.selectedCard,
+              selectedLength === item._id && styles.selectedCard,
             ]}
           >
             <View>
-              <Text style={styles.lengthTitle}>{item.label}</Text>
-              <Text style={styles.lengthDesc}>{item.desc}</Text>
+              <Text style={styles.lengthTitle}>{item.name}</Text>
+              <Text style={styles.lengthDesc}>{item.description}</Text>
             </View>
 
             <Text style={styles.lengthPrice}>
-              {item.extra === 0
+              {item.extraPrice === 0
                 ? "Base Price"
-                : `Base Price + ${item.extra}`}
+                : `Base Price + ${item.extraPrice}`}
             </Text>
           </TouchableOpacity>
-        );
-      })}
+        ))
+      )}
 
-      {/* CONTINUE */}
       <TouchableOpacity
-      disabled={!selectedLength}
-      style={[
-        styles.continueBtn,
-        !selectedLength && { opacity: 0.5 },
-      ]}
-  
-  onPress={() => {
-    if (!selectedLength) return;
+        disabled={!selectedLength}
+        style={[styles.continueBtn, !selectedLength && { opacity: 0.5 }]}
+        onPress={() => {
+          if (!selectedLength) return;
 
-    const extraPrice =
-      selectedLength === "medium"
-        ? 1000
-        : selectedLength === "long"
-        ? 2000
-        : 0;
-
-    const finalPrice = basePrice + extraPrice;
-
-    router.push({
-      pathname: "/(customer)/(services)/dateTime",
-      params: {
-        selectedServices: JSON.stringify(services),
-        selectedLength: selectedLength,
-        totalAmount: String(finalPrice),
-        bookingType: "hair",
-      },
-    });
-  }}
->
-  <Text style={styles.continueText}>Continue</Text>
-</TouchableOpacity>
+          router.push({
+            pathname: "/(customer)/(services)/dateTime",
+            params: {
+              selectedServices: JSON.stringify(services),
+              selectedLength: JSON.stringify(selectedHairLength),
+              totalAmount: String(finalPrice),
+              bookingType: "hair",
+            },
+          });
+        }}
+      >
+        <Text style={styles.continueText}>Continue</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -245,11 +239,19 @@ const styles = StyleSheet.create({
 
   serviceName: {
     fontWeight: "700",
+    fontSize: 16,
+  },
+
+  serviceTime: {
+    color: "#777",
+    marginTop: 5,
+    fontSize: 13,
   },
 
   servicePrice: {
     color: "#ff2d55",
-    marginTop: 4,
+    marginTop: 5,
+    fontWeight: "700",
   },
 
   lengthCard: {
@@ -265,6 +267,7 @@ const styles = StyleSheet.create({
   selectedCard: {
     borderWidth: 2,
     borderColor: "#ff2d55",
+    backgroundColor: "#fff",
   },
 
   lengthTitle: {

@@ -2,6 +2,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Alert } fro
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Backend login API
 const API_URL = "http://10.0.2.2:5000/api/customers/login";
@@ -34,11 +35,16 @@ export default function Login() {
         Alert.alert("Error", data.message || "Login failed");
         return;
       }
+      // Store the authentication token
+      await AsyncStorage.setItem("customerToken", data.token);
+      await AsyncStorage.setItem("customerData", JSON.stringify(data.customer));
 
       Alert.alert("Success", "Login successful");
       router.replace('/(customer)/(tabs)/home');
-    } catch (error) {
-      Alert.alert("Error", "Cannot connect to backend");
+
+    } catch (error: any) {
+      console.log("Login error:", error);
+      Alert.alert("Error", String(error?.message || error));
     }
   };
 

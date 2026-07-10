@@ -1,12 +1,9 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const twilio = require("twilio");
-const Customer = require("../models/Customer");
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
+const Customer = require("../models/Customer");
+const EmailOtp = require("../models/EmailOtp");
+const sendEmail = require("../utils/sendEmail");
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET || "limosalon_secret", {
@@ -14,10 +11,132 @@ const generateToken = (id) => {
   });
 };
 
-const normalizePhoneForTwilio = (phone) => {
-  return phone.replace(/\s/g, "");
+/* =========================
+   SEND REGISTRATION EMAIL OTP
+========================= */
+const sendRegistrationOtp = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const existingCustomer = await Customer.findOne({
+      email: normalizedEmail,
+    });
+
+    if (existingCustomer) {
+      return res.status(400).json({
+        success: false,
+        message: "Email already registered. Please login.",
+      });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    await EmailOtp.deleteMany({
+      email: normalizedEmail,
+      purpose: "registration",
+    });
+
+    await EmailOtp.create({
+      email: normalizedEmail,
+      otp,
+      purpose: "registration",
+      verified: false,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    });
+
+    await sendEmail({
+      to: normalizedEmail,
+      subject: "LimoSalon Registration Verification OTP",
+      html: `
+        <h2>LimoSalon Registration Verification</h2>
+        <p>Your registration OTP is:</p>
+        <h1>${otp}</h1>
+        <p>This OTP expires in 10 minutes.</p>
+      `,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Registration OTP sent successfully",
+    });
+  } catch (error) {
+    console.error("Send registration OTP error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to send registration OTP",
+      error: error.message,
+    });
+  }
 };
 
+/* =========================
+   VERIFY REGISTRATION EMAIL OTP
+========================= */
+const verifyRegistrationOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+      return res.status(400).json({
+        success: false,
+        message: "Email and OTP are required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const record = await EmailOtp.findOne({
+      email: normalizedEmail,
+      otp,
+      purpose: "registration",
+      verified: false,
+    });
+
+    if (!record) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP",
+      });
+    }
+
+    if (record.expiresAt < new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "OTP expired",
+      });
+    }
+
+    record.verified = true;
+    await record.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Email verified successfully",
+    });
+  } catch (error) {
+    console.error("Verify registration OTP error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "OTP verification failed",
+      error: error.message,
+    });
+  }
+};
+
+/* =========================
+   REGISTER CUSTOMER
+========================= */
 const registerCustomer = async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
@@ -29,6 +148,18 @@ const registerCustomer = async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+
+    const verifiedOtp = await EmailOtp.findOne({
+      email: normalizedEmail,
+      purpose: "registration",
+      verified: true,
+    });
+
+    if (!verifiedOtp) {
+      return res.status(403).json({
+        message: "Please verify your email before registration.",
+      });
+    }
 
     const existingEmail = await Customer.findOne({ email: normalizedEmail });
 
@@ -53,7 +184,13 @@ const registerCustomer = async (req, res) => {
       email: normalizedEmail,
       phone,
       password: hashedPassword,
-      phoneVerified: false,
+      phoneVerified: true,
+      emailVerified: true,
+    });
+
+    await EmailOtp.deleteMany({
+      email: normalizedEmail,
+      purpose: "registration",
     });
 
     res.status(201).json({
@@ -64,6 +201,7 @@ const registerCustomer = async (req, res) => {
         email: customer.email,
         phone: customer.phone,
         phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
       },
       token: generateToken(customer._id),
     });
@@ -75,91 +213,9 @@ const registerCustomer = async (req, res) => {
   }
 };
 
-const sendOtp = async (req, res) => {
-  try {
-    const { phone } = req.body;
-
-    if (!phone) {
-      return res.status(400).json({
-        message: "Phone number is required",
-      });
-    }
-
-    const customer = await Customer.findOne({ phone });
-
-    if (!customer) {
-      return res.status(404).json({
-        message: "Phone number not registered",
-      });
-    }
-
-    await twilioClient.verify.v2
-      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
-      .verifications.create({
-        to: normalizePhoneForTwilio(phone),
-        channel: "sms",
-      });
-
-    res.status(200).json({
-      message: "OTP sent successfully",
-    });
-  } catch (error) {
-    console.log("Twilio Otp error"),
-    error.message;
-
-    res.status(500).json({
-      message: error.message || "OTP sending failed",
-      error: error.message,
-
-    });
-  }
-};
-
-const verifyOtp = async (req, res) => {
-  try {
-    const { phone, otp } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({
-        message: "Phone and OTP are required",
-      });
-    }
-
-    const customer = await Customer.findOne({ phone });
-
-    if (!customer) {
-      return res.status(404).json({
-        message: "Customer not found",
-      });
-    }
-
-    const verificationCheck = await twilioClient.verify.v2
-      .services(process.env.TWILIO_VERIFY_SERVICE_SID)
-      .verificationChecks.create({
-        to: normalizePhoneForTwilio(phone),
-        code: otp,
-      });
-
-    if (verificationCheck.status !== "approved") {
-      return res.status(400).json({
-        message: "Invalid OTP",
-      });
-    }
-
-    customer.phoneVerified = true;
-    await customer.save();
-
-    res.status(200).json({
-      message: "Phone verified successfully",
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "OTP verification failed",
-      error: error.message,
-    });
-  }
-};
-
+/* =========================
+   LOGIN CUSTOMER
+========================= */
 const loginCustomer = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -171,12 +227,6 @@ const loginCustomer = async (req, res) => {
     if (!customer) {
       return res.status(401).json({
         message: "Invalid email or password",
-      });
-    }
-
-    if (!customer.phoneVerified) {
-      return res.status(403).json({
-        message: "Please verify your phone number before login.",
       });
     }
 
@@ -196,6 +246,7 @@ const loginCustomer = async (req, res) => {
         email: customer.email,
         phone: customer.phone,
         phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
       },
       token: generateToken(customer._id),
     });
@@ -207,9 +258,43 @@ const loginCustomer = async (req, res) => {
   }
 };
 
+/* =========================
+   CUSTOMER PROFILE
+========================= */
+const getCustomerProfile = async (req, res) => {
+  try {
+    res.status(200).json({
+      customer: req.customer,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to load customer profile",
+      error: error.message,
+    });
+  }
+};
+
+/* =========================
+   OLD MOBILE OTP - NOT USED NOW
+========================= */
+const sendOtp = async (req, res) => {
+  res.status(410).json({
+    message: "Mobile OTP is removed. Email OTP verification is used now.",
+  });
+};
+
+const verifyOtp = async (req, res) => {
+  res.status(410).json({
+    message: "Mobile OTP is removed. Email OTP verification is used now.",
+  });
+};
+
 module.exports = {
   registerCustomer,
   loginCustomer,
+  sendRegistrationOtp,
+  verifyRegistrationOtp,
   sendOtp,
   verifyOtp,
+  getCustomerProfile,
 };

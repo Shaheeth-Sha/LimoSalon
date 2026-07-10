@@ -1,74 +1,108 @@
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Alert } from "react-native";
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Image,
+  Alert,
+  ActivityIndicator,
+} from "react-native";
 import { useState } from "react";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
-const API_URL = "http://10.0.2.2:5000/api/customers/send-otp";
+const API_URL = "http://10.0.2.2:5000/api/customers";
 
-export default function PhoneVerification() {
+export default function EmailVerification() {
   const router = useRouter();
-  const { phone: registeredPhone } = useLocalSearchParams();
 
-  const [phone, setPhone] = useState(
-    typeof registeredPhone === "string" ? registeredPhone : "+94 "
-  );
+  const { name, email, phone, password } = useLocalSearchParams();
+
+  const registeredEmail = typeof email === "string" ? email : "";
+
+  const [loading, setLoading] = useState(false);
 
   const sendOtp = async () => {
-    if (!phone || phone.replace(/\D/g, "").length !== 11) {
-      Alert.alert("Error", "Enter valid Sri Lankan phone number");
+    if (!registeredEmail) {
+      Alert.alert("Error", "Email address is missing.");
       return;
     }
 
     try {
-      const res = await fetch(API_URL, {
+      setLoading(true);
+
+      const response = await fetch(`${API_URL}/send-registration-otp`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: registeredEmail,
+        }),
       });
 
-      const data = await res.json();
+      const data = await response.json();
 
-      if (!res.ok) {
-        Alert.alert("Error", data.message || "OTP sending failed");
+      if (!response.ok) {
+        Alert.alert("Error", data.message || "Failed to send OTP");
         return;
       }
 
-      Alert.alert("Success", "OTP sent successfully");
+      Alert.alert("OTP Sent", "Please check your email for the OTP code.");
 
       router.push({
         pathname: "/(customer)/(auth)/VerifyOtp",
-        params: { phone },
+        params: {
+          name,
+          email: registeredEmail,
+          phone,
+          password,
+        },
       });
     } catch (error) {
-      Alert.alert("Error", "Cannot connect to backend");
+      Alert.alert("Error", "Unable to connect to server.");
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
     <View style={styles.container}>
       <View style={styles.logoRow}>
-        <Image source={require("../../../assets/LimoIcon/logo.png")} style={styles.logo} />
+        <Image
+          source={require("../../../assets/LimoIcon/logo.png")}
+          style={styles.logo}
+        />
         <Text style={styles.logoText}>LIMO{"\n"}SALON</Text>
       </View>
 
       <View style={styles.card}>
-        <Ionicons name="phone-portrait-outline" size={60} color="#333" />
-        <Text style={styles.heading}>Phone Verification</Text>
+        <Ionicons name="mail-outline" size={60} color="#333" />
+        <Text style={styles.heading}>Email Verification</Text>
         <Text style={styles.subText}>
-          We will send you a one-time password to verify your phone number
+          We will send a one-time password to verify your email address
         </Text>
       </View>
 
       <TextInput
-        value={phone}
-        onChangeText={setPhone}
-        placeholder="+94"
-        keyboardType="phone-pad"
+        value={registeredEmail}
+        editable={false}
+        placeholder="Email"
+        keyboardType="email-address"
         style={styles.input}
       />
 
-      <TouchableOpacity style={styles.button} onPress={sendOtp}>
-        <Text style={styles.buttonText}>Send OTP</Text>
+      <TouchableOpacity
+        style={[styles.button, loading && styles.disabledButton]}
+        onPress={sendOtp}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Send Email OTP</Text>
+        )}
       </TouchableOpacity>
     </View>
   );
@@ -81,48 +115,42 @@ const styles = StyleSheet.create({
     paddingHorizontal: 25,
     paddingTop: 80,
   },
-
   logoRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 40,
   },
-
   logo: {
     width: 65,
     height: 65,
     marginRight: 10,
   },
-
   logoText: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#ff1744",
   },
-
   card: {
     backgroundColor: "#D94A70",
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 30,
     alignItems: "center",
     marginBottom: 45,
   },
-
   heading: {
     fontSize: 28,
     fontWeight: "bold",
     color: "#fff",
     marginTop: 15,
   },
-
   subText: {
     color: "#fff",
     textAlign: "center",
     marginTop: 10,
     fontSize: 14,
+    lineHeight: 20,
   },
-
   input: {
     borderWidth: 1,
     borderColor: "#ddd",
@@ -130,15 +158,18 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 30,
     fontSize: 15,
+    color: "#333",
+    backgroundColor: "#F8F8F8",
   },
-
   button: {
     backgroundColor: "#FF2D75",
     padding: 16,
     borderRadius: 10,
     alignItems: "center",
   },
-
+  disabledButton: {
+    opacity: 0.6,
+  },
   buttonText: {
     color: "#fff",
     fontSize: 16,

@@ -10,9 +10,10 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
-const router = useRouter();
 
 export default function Services() {
+  const router = useRouter();
+
   return (
     <View style={styles.container}>
 
