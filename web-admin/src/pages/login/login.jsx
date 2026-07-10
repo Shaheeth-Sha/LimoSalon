@@ -1,49 +1,72 @@
-import React from "react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import "./login.css";
-import logo from "../../assets/logo.png";
-import image from "../../assets/login.png";
-import{useNavigate} from "react-router-dom";
 
-const Login = () => {
+import logo from "../../assets/logo.png";
+import loginImage from "../../assets/login.png";
+
+export default function Login() {
   const navigate = useNavigate();
 
-  return (
-    <div className="container">
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
-      {/* LEFT SIDE */}
-      <div className="left">
-        <img src={image} alt="login visual" className="illustration" />
+  const handleLogin = (e) => {
+    e.preventDefault();
+
+    // API එක connect කරනකන් temporary navigation
+    navigate("/dashboard");
+  };
+
+  return (
+    <div className="login-page">
+      <div className="left-side">
+        <img src={loginImage} alt="Login" />
       </div>
 
-      {/* RIGHT SIDE */}
-      <div className="right">
-        <div className="card">
+      <div className="right-side">
+        <div className="login-card">
 
-          <div className="logoBox">
-            <img src={logo} alt="logo" className="logo" />
-            <div className="brandText">
-              <span>LIMO </span>
-              <span>SALON</span>
-            </div>
-
+          <div className="logo-section">
+            <img src={logo} alt="Logo" />
+            <h2>LIMO<br />SALON</h2>
           </div>
 
-          <h1 className="title">ADMIN LOGIN</h1>
+          <h1>ADMIN LOGIN</h1>
 
-          <input type="email" placeholder="Email" className="input" />
-          <input type="password" placeholder="Password" className="input" />
+          <form onSubmit={handleLogin}>
 
-          <p className="forgot" onClick={() => navigate("/forgot-password")} 
-            style={{ cursor: "pointer" }}> Forgot Password?
-          </p>
+            <input
+              type="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
 
-          <button className="btn">Log In</button>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+
+            <p
+              className="forgot"
+              onClick={() => navigate("/forgot-password")}
+            >
+              Forgot password?
+            </p>
+
+            <button type="submit">
+              Log In
+            </button>
+
+          </form>
 
         </div>
       </div>
-
     </div>
   );
-};
-
-export default Login;
+}

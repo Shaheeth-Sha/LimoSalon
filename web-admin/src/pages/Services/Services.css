@@ -1,0 +1,86 @@
+.services-content{
+    padding:30px;
+}
+
+.services-content h1{
+    margin-bottom:20px;
+}
+
+.add-btn{
+    background:#ff2c73;
+    color:white;
+    border:none;
+    padding:12px 20px;
+    border-radius:8px;
+    cursor:pointer;
+    margin-bottom:20px;
+}
+
+.service-table{
+    width:100%;
+    border-collapse:collapse;
+    background:white;
+}
+
+.service-table th,
+.service-table td{
+    border:1px solid #ddd;
+    padding:15px;
+    text-align:left;
+}
+
+.service-table th{
+    background:#f9e8f5;
+}
+
+.edit-btn {
+  background: #3da0ff;
+  color: white;
+  border: none;
+  width: 55px;
+  height: 34px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.delete-btn {
+  background: #ff4d4d;
+  color: white;
+  border: none;
+  width: 65px;
+  height: 34px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+.edit-btn {
+  background: #4da3ff;
+  color: white;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-right: 10px;
+}
+
+.edit-btn:hover {
+  background: #2d8cf0;
+}
+
+.delete-btn {
+  background: #ff4d4d;
+  color: white;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.delete-btn:hover {
+  background: #e63946;
+}

@@ -1,114 +1,145 @@
-/* FULL SCREEN */
-.container {
-  display: flex;
-  height: 100vh;
-  width: 100%;
-  font-family: Arial, sans-serif;
-  background: white;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Segoe UI", sans-serif;
 }
 
-/* LEFT SIDE */
-.left {
-  flex: 1;
+.login-page {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  background: #f8f8f8;
+}
+
+/* Left Side */
+.left-side {
+  width: 50%;
   display: flex;
   justify-content: center;
   align-items: center;
-  background: white;
 }
 
-.illustration {
+.left-side img {
   width: 80%;
   max-width: 500px;
 }
 
-/* RIGHT SIDE */
-.right {
-  flex: 1;
+/* Right Side */
+.right-side {
+  width: 50%;
   display: flex;
   justify-content: center;
   align-items: center;
-  background: #ffffff;
 }
 
-/* CARD */
-.card {
- / width: 380px;
-  background: #f3cdef;
-  padding: 150px 150px 150px 150px;
-  border-radius: 20px;
-  text-align: center;
-  justify-content: center;
-  align-items: center;
-  
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+.login-card {
+  width: 420px;
+  background: #f8eaf6;
+  border-radius: 15px;
+  padding: 40px;
 }
 
-/* LOGO AREA */
-.logoBox {
+/* Logo */
+.logo-section {
   display: flex;
-  text-align: center;
   align-items: center;
-  margin-bottom: 50px;
   gap: 12px;
-  justify-content: center;
+  margin-bottom: 30px;
 }
 
-.logo {
-  width: 55px;
-  height: 55px;
- 
+.logo-section img {
+  width: 60px;
 }
 
-.brandText {
+.logo-section h2 {
+  font-size: 30px;
+  font-weight: bold;
+  color: #222;
+  line-height: 1.1;
+}
+
+/* Heading */
+.login-card h1 {
+  text-align: center;
+  margin-bottom: 35px;
+  color: #222;
+  font-size: 32px;
+}
+
+/* Form */
+form {
   display: flex;
   flex-direction: column;
-  line-height: 1.2;
-  font-size: 18px;
-  font-weight: 700;
 }
 
-/* TITLE */
-.title {
-  font-size: 20px;
-  margin-bottom: 25px;
-  font-weight: bold;
-}
-
-/* INPUT */
-.input {
+/* Inputs */
+form input {
   width: 100%;
-  padding: 12px;
-  margin-bottom: 15px;
-  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 18px;
   border: 1px solid #ddd;
+  border-radius: 6px;
   outline: none;
+  font-size: 16px;
 }
 
-.input:focus {
-  border-color: #ff4d7d;
+form input:focus {
+  border-color: #ff2b6a;
 }
 
-/* FORGOT */
+/* Forgot Password */
 .forgot {
   text-align: right;
-  font-size: 12px;
-  color: #ff4d7d;
-  margin-bottom: 20px;
+  color: #ff2b6a;
+  font-size: 14px;
   cursor: pointer;
+  margin-bottom: 30px;
 }
 
-/* BUTTON */
-.btn {
+.forgot:hover {
+  text-decoration: underline;
+}
+
+/* Login Button */
+form button {
   width: 100%;
-  padding: 12px;
+  padding: 14px;
   border: none;
-  border-radius: 10px;
-  background: #ff2d55;
+  border-radius: 6px;
+  background: #ff2b6a;
   color: white;
+  font-size: 18px;
   font-weight: bold;
   cursor: pointer;
+  transition: 0.3s;
 }
 
-.btn:hover {
-  background: #e6003d;
+form button:hover {
+  background: #e61e5d;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .login-page {
+    flex-direction: column;
+  }
+
+  .left-side,
+  .right-side {
+    width: 100%;
+  }
+
+  .left-side {
+    height: 40vh;
+  }
+
+  .left-side img {
+    width: 60%;
+  }
+
+  .login-card {
+    width: 90%;
+    margin-bottom: 30px;
+  }
 }
