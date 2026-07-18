@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -13,6 +14,7 @@ import { useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const PROFILE_API = "http://10.0.2.2:5000/api/customers/profile";
+const MY_BOOKINGS_API = "http://10.0.2.2:5000/api/bookings/my-bookings";
 
 type AlertState = {
   visible: boolean;
@@ -20,11 +22,81 @@ type AlertState = {
   message: string;
 };
 
+type Booking = {
+  _id: string;
+  services: { name: string }[];
+  staff: { name: string };
+  selectedDate: string;
+  selectedTime: string;
+  status: string;
+  isPast: boolean;
+};
+
+// Converts a normalized time like "10:00 am" into minutes since
+// midnight, used only to break ties when two bookings share the same
+// date (so the earliest one in the day is picked as "next").
+const timeToMinutes = (time: string) => {
+  const match = time.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+  if (!match) return 0;
+
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toLowerCase();
+
+  if (period === "am" && hours === 12) hours = 0;
+  if (period === "pm" && hours !== 12) hours += 12;
+
+  return hours * 60 + minutes;
+};
+
+// "10:00 am" -> "10.00 AM", matching the existing design's time format.
+const formatTimeDisplay = (time: string) => {
+  const match = time.match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+  if (!match) return time;
+  return `${match[1]}.${match[2]} ${match[3].toUpperCase()}`;
+};
+
+// "2026-07-24" -> "Jul 24"
+const formatDateShort = (dateStr: string) => {
+  try {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  } catch {
+    return dateStr;
+  }
+};
+
+// "2026-07-24" -> "Today" / "Tomorrow" / "3 days"
+const formatDaysUntil = (dateStr: string) => {
+  try {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const target = new Date(year, month - 1, day);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    target.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+
+    if (diffDays <= 0) return "Today";
+    if (diffDays === 1) return "Tomorrow";
+    return `${diffDays} days`;
+  } catch {
+    return "";
+  }
+};
+
 export default function Home() {
   const router = useRouter();
 
   const [customerName, setCustomerName] = useState("Customer");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Fixed: previously a hardcoded "Hair Cut & Styling / Oct 24" card
+  // regardless of what the customer actually booked. Now loads real
+  // bookings and shows the soonest upcoming, non-cancelled one.
+  const [nextBooking, setNextBooking] = useState<Booking | null>(null);
+  const [bookingLoading, setBookingLoading] = useState(true);
 
   const [alert, setAlert] = useState<AlertState>({
     visible: false,
@@ -39,42 +111,69 @@ export default function Home() {
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
 
   useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const token = await AsyncStorage.getItem("customerToken");
-
-        if (!token) return;
-
-        const res = await fetch(PROFILE_API, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const data = await res.json();
-
-        if (res.ok && data.customer?.name) {
-          const fullName = data.customer.name || "";
-          // Fixed: was .slice(-1)[0], which grabs the LAST word of the
-          // full name (the last name). Greeting someone by their last
-          // name reads backwards — real apps greet by first name.
-          const firstName = fullName.trim().split(" ")[0];
-          setCustomerName(firstName || "Customer");
-        }
-      } catch (error) {
-        console.log("Profile load failed:", error);
-      }
-    };
-
     loadProfile();
+    loadNextBooking();
   }, []);
 
-  // Fixed: search bar had no state, no submit handler, and the icon
-  // wasn't even wrapped in a touchable — nothing happened when typing
-  // or tapping it. Now it navigates to the Services tab with the
-  // query attached, so that screen can filter by it once it reads
-  // this param.
+  const loadProfile = async () => {
+    try {
+      const token = await AsyncStorage.getItem("customerToken");
+      if (!token) return;
+
+      const res = await fetch(PROFILE_API, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.customer?.name) {
+        const fullName = data.customer.name || "";
+        const firstName = fullName.trim().split(" ")[0];
+        setCustomerName(firstName || "Customer");
+      }
+    } catch (error) {
+      console.log("Profile load failed:", error);
+    }
+  };
+
+  const loadNextBooking = async () => {
+    try {
+      setBookingLoading(true);
+      const token = await AsyncStorage.getItem("customerToken");
+      if (!token) return;
+
+      const res = await fetch(MY_BOOKINGS_API, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+      if (!res.ok) return;
+
+      const bookings: Booking[] = Array.isArray(data.bookings) ? data.bookings : [];
+
+      const upcoming = bookings
+        .filter((b) => !b.isPast && b.status !== "Cancelled")
+        .sort((a, b) => {
+          if (a.selectedDate !== b.selectedDate) {
+            return a.selectedDate < b.selectedDate ? -1 : 1;
+          }
+          return timeToMinutes(a.selectedTime) - timeToMinutes(b.selectedTime);
+        });
+
+      setNextBooking(upcoming[0] || null);
+    } catch (error) {
+      console.log("Next booking load failed:", error);
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
   const runSearch = () => {
     if (!searchQuery.trim()) return;
     router.push({
@@ -85,11 +184,6 @@ export default function Home() {
 
   return (
     <View style={styles.container}>
-      {/* Fixed: previously the greeting and search bar scrolled away
-          with everything else. Real-world booking apps typically keep
-          the search bar reachable while scrolling — using
-          stickyHeaderIndices pins just the search bar (index 0 below)
-          while the rest of the content scrolls normally underneath. */}
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -145,36 +239,60 @@ export default function Home() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.upcomingCard}>
-          <View style={styles.cardTopRow}>
-            <Text style={styles.status}>Confirmed</Text>
-            <Ionicons name="receipt-outline" size={26} color="#FF2D75" />
+        {bookingLoading ? (
+          <View style={styles.upcomingCard}>
+            <ActivityIndicator size="small" color="#FF2D75" />
           </View>
-
-          <Text style={styles.serviceTitle}>Hair Cut & Styling</Text>
-          <Text style={styles.staff}>With Rashmi W.</Text>
-
-          <View style={styles.dateRow}>
-            <View style={styles.dateItem}>
-              <Text style={styles.label}>Date</Text>
-              <Text style={styles.value}>Oct 24</Text>
+        ) : nextBooking ? (
+          <View style={styles.upcomingCard}>
+            <View style={styles.cardTopRow}>
+              <Text style={styles.status}>{nextBooking.status}</Text>
+              <Ionicons name="receipt-outline" size={26} color="#FF2D75" />
             </View>
 
-            <View style={styles.divider} />
+            <Text style={styles.serviceTitle}>
+              {(nextBooking.services || []).map((s) => s.name).filter(Boolean).join(", ") ||
+                "Service"}
+            </Text>
+            {nextBooking.staff?.name ? (
+              <Text style={styles.staff}>With {nextBooking.staff.name}</Text>
+            ) : null}
 
-            <View style={styles.dateItem}>
-              <Text style={styles.label}>Time</Text>
-              <Text style={styles.value}>10.00 AM</Text>
-            </View>
+            <View style={styles.dateRow}>
+              <View style={styles.dateItem}>
+                <Text style={styles.label}>Date</Text>
+                <Text style={styles.value}>{formatDateShort(nextBooking.selectedDate)}</Text>
+              </View>
 
-            <View style={styles.divider} />
+              <View style={styles.divider} />
 
-            <View style={styles.dateItem}>
-              <Text style={styles.label}>In</Text>
-              <Text style={styles.value}>2 days</Text>
+              <View style={styles.dateItem}>
+                <Text style={styles.label}>Time</Text>
+                <Text style={styles.value}>{formatTimeDisplay(nextBooking.selectedTime)}</Text>
+              </View>
+
+              <View style={styles.divider} />
+
+              <View style={styles.dateItem}>
+                <Text style={styles.label}>In</Text>
+                <Text style={styles.value}>{formatDaysUntil(nextBooking.selectedDate)}</Text>
+              </View>
             </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.upcomingCard}>
+            <Text style={styles.emptyBookingText}>
+              You have no upcoming bookings.
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyBookingBtn}
+              activeOpacity={0.8}
+              onPress={() => router.push("/(customer)/(tabs)/services")}
+            >
+              <Text style={styles.emptyBookingBtnText}>Book a Service</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Available Coupons & Offers</Text>
@@ -250,8 +368,6 @@ export default function Home() {
         </TouchableOpacity>
       </View>
 
-      {/* Custom branded alert modal — matches the pattern used across
-          the rest of the app instead of native Alert.alert(). */}
       <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -270,14 +386,6 @@ export default function Home() {
   );
 }
 
-// =====================================================
-// App primary color: #FF2D75 (matches project design spec)
-// Was #ff4d6d in several places (status text, view-all links, nav
-// icons, offer button text) — fixed to the correct hex.
-// Loyalty card intentionally keeps its own maroon/gold palette per
-// request — real apps commonly differentiate a "Gold Member" card
-// from the main brand color for a premium feel.
-// =====================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -446,6 +554,27 @@ const styles = StyleSheet.create({
     width: 1,
     backgroundColor: "#FF2D75",
     opacity: 0.3,
+  },
+
+  emptyBookingText: {
+    fontSize: 14,
+    color: "#777",
+    textAlign: "center",
+    paddingVertical: 8,
+  },
+
+  emptyBookingBtn: {
+    marginTop: 10,
+    backgroundColor: "#FF2D75",
+    paddingVertical: 12,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+
+  emptyBookingBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
   },
 
   offerCard: {

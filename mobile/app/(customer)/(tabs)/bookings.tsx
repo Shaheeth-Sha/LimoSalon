@@ -6,6 +6,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
+  TextInput,
 } from "react-native";
 import { useEffect, useState } from "react";
 import { Ionicons, Feather } from "@expo/vector-icons";
@@ -25,6 +26,7 @@ type Booking = {
   selectedTime: string;
   totalAmount: number;
   status: string;
+  effectiveStatus: string;
   paymentStatus: string;
   isPast: boolean;
 };
@@ -35,11 +37,6 @@ type AlertState = {
   message: string;
 };
 
-// Fixed: previously two hardcoded cards for "Upcoming" and two more
-// for "Past" — nothing here was real data. Now fetches the logged-in
-// customer's actual bookings from the backend and renders whatever
-// comes back, split into the same two tabs using the isPast flag the
-// new /my-bookings endpoint computes server-side.
 export default function Bookings() {
   const [activeTab, setActiveTab] = useState<"upcoming" | "past">("upcoming");
   const router = useRouter();
@@ -61,6 +58,16 @@ export default function Bookings() {
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
 
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+
+  // Fixed/new: feedback is tracked locally per booking id, since there's
+  // no feedback backend yet. This is a demo-only simulation — it won't
+  // survive an app restart. Map of bookingId -> feedback text.
+  const [feedbackByBookingId, setFeedbackByBookingId] = useState<Record<string, string>>({});
+  const [feedbackModal, setFeedbackModal] = useState<{
+    mode: "write" | "view";
+    bookingId: string | null;
+    text: string;
+  }>({ mode: "write", bookingId: null, text: "" });
 
   useEffect(() => {
     loadBookings();
@@ -87,9 +94,7 @@ export default function Bookings() {
       try {
         data = await res.json();
       } catch {
-        // Response wasn't JSON at all (e.g. a 404 HTML page from a
-        // route that doesn't exist yet) — status code alone still
-        // tells us something useful below.
+        // Response wasn't JSON at all.
       }
 
       if (!res.ok) {
@@ -125,11 +130,11 @@ export default function Bookings() {
         throw new Error(data.message || "Failed to cancel booking");
       }
 
-      // Update locally instead of re-fetching everything, so the
-      // screen responds instantly.
       setBookings((prev) =>
         prev.map((b) =>
-          b._id === bookingId ? { ...b, status: "Cancelled", isPast: true } : b
+          b._id === bookingId
+            ? { ...b, status: "Cancelled", effectiveStatus: "Cancelled", isPast: true }
+            : b
         )
       );
 
@@ -166,7 +171,28 @@ export default function Bookings() {
   const getStatusPillStyle = (status: string) => {
     if (status === "Cancelled") return styles.cancelPill;
     if (status === "Completed") return styles.completedPill;
+    if (status === "Awaiting Confirmation") return styles.awaitingPill;
     return styles.statusPill;
+  };
+
+  const openFeedbackModal = (bookingId: string) => {
+    const existing = feedbackByBookingId[bookingId];
+    setFeedbackModal({
+      mode: existing ? "view" : "write",
+      bookingId,
+      text: existing || "",
+    });
+  };
+
+  const submitFeedback = () => {
+    if (!feedbackModal.bookingId || !feedbackModal.text.trim()) return;
+
+    setFeedbackByBookingId((prev) => ({
+      ...prev,
+      [feedbackModal.bookingId as string]: feedbackModal.text.trim(),
+    }));
+
+    setFeedbackModal({ mode: "write", bookingId: null, text: "" });
   };
 
   return (
@@ -239,11 +265,17 @@ export default function Bookings() {
               .filter(Boolean)
               .join(", ");
 
+            // Fixed: use the computed effectiveStatus (Completed for
+            // past-due Confirmed bookings) instead of the raw status,
+            // so the pill and feedback button reflect reality.
+            const displayStatus = booking.effectiveStatus || booking.status;
+            const hasFeedback = !!feedbackByBookingId[booking._id];
+
             return (
               <View key={booking._id} style={styles.card}>
                 <View style={styles.rowBetween}>
-                  <View style={getStatusPillStyle(booking.status)}>
-                    <Text style={styles.statusText}>{booking.status}</Text>
+                  <View style={getStatusPillStyle(displayStatus)}>
+                    <Text style={styles.statusText}>{displayStatus}</Text>
                   </View>
                   <Text style={styles.priceTop}>
                     LKR {booking.totalAmount?.toLocaleString()}
@@ -277,7 +309,7 @@ export default function Bookings() {
                   </TouchableOpacity>
                 </View>
 
-                {activeTab === "upcoming" && booking.status !== "Cancelled" && (
+                {activeTab === "upcoming" && displayStatus !== "Cancelled" && (
                   <View style={styles.rowBetween}>
                     <TouchableOpacity
                       style={styles.cancelBtn}
@@ -302,13 +334,15 @@ export default function Bookings() {
                   </View>
                 )}
 
-                {activeTab === "past" && booking.status === "Completed" && (
+                {activeTab === "past" && displayStatus === "Completed" && (
                   <TouchableOpacity
                     style={styles.feedbackBtn}
                     activeOpacity={0.8}
-                    onPress={() => showAlert("Feedback", "This feature is coming soon.")}
+                    onPress={() => openFeedbackModal(booking._id)}
                   >
-                    <Text style={styles.feedbackText}>Leave Feedback</Text>
+                    <Text style={styles.feedbackText}>
+                      {hasFeedback ? "View Your Feedback" : "Leave Feedback"}
+                    </Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -351,6 +385,72 @@ export default function Bookings() {
         </View>
       </Modal>
 
+      {/* Feedback modal — write or view, same modal, different mode.
+          NOTE: this is a local, demo-only simulation — feedback text
+          lives in component state only and is not sent to any backend
+          yet. Wire up a real endpoint here if you want it to persist. */}
+      <Modal
+        visible={!!feedbackModal.bookingId}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFeedbackModal({ mode: "write", bookingId: null, text: "" })}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconCircle}>
+              <Feather
+                name={feedbackModal.mode === "view" ? "message-circle" : "edit-3"}
+                size={28}
+                color="#FF2D75"
+              />
+            </View>
+            <Text style={styles.modalTitle}>
+              {feedbackModal.mode === "view" ? "Your Feedback" : "Leave Feedback"}
+            </Text>
+
+            {feedbackModal.mode === "view" ? (
+              <Text style={styles.modalMessage}>{feedbackModal.text}</Text>
+            ) : (
+              <TextInput
+                style={styles.feedbackInput}
+                placeholder="How was your experience?"
+                placeholderTextColor="#999"
+                multiline
+                numberOfLines={4}
+                value={feedbackModal.text}
+                onChangeText={(text) =>
+                  setFeedbackModal((prev) => ({ ...prev, text }))
+                }
+              />
+            )}
+
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.8}
+              onPress={
+                feedbackModal.mode === "view"
+                  ? () => setFeedbackModal({ mode: "write", bookingId: null, text: "" })
+                  : submitFeedback
+              }
+            >
+              <Text style={styles.modalButtonText}>
+                {feedbackModal.mode === "view" ? "Close" : "Submit Feedback"}
+              </Text>
+            </TouchableOpacity>
+
+            {feedbackModal.mode === "write" && (
+              <TouchableOpacity
+                style={styles.modalButtonSecondary}
+                activeOpacity={0.8}
+                onPress={() => setFeedbackModal({ mode: "write", bookingId: null, text: "" })}
+              >
+                <Text style={styles.modalButtonSecondaryText}>Cancel</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+
       {/* Custom branded alert modal — replaces Alert.alert() */}
       <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
         <View style={styles.modalOverlay}>
@@ -370,10 +470,6 @@ export default function Bookings() {
   );
 }
 
-// =====================================================
-// App primary color: #FF2D75 (matches project design spec)
-// Was #ff2d55 in several places — fixed to the correct hex.
-// =====================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -484,6 +580,14 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
 
+  awaitingPill: {
+    backgroundColor: "#FFF3D6",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+
   cancelPill: {
     backgroundColor: "#eee",
     paddingHorizontal: 10,
@@ -504,7 +608,7 @@ const styles = StyleSheet.create({
   feedbackBtn: {
     backgroundColor: "#FF2D75",
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 25,
     alignItems: "center",
     marginTop: 10,
   },
@@ -518,7 +622,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     paddingVertical: 8,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 25,
   },
 
   cancelText: {
@@ -529,7 +633,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FF2D75",
     paddingVertical: 8,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 25,
   },
 
   rescheduleText: {
@@ -547,6 +651,19 @@ const styles = StyleSheet.create({
     color: "#777",
     fontSize: 14,
     textAlign: "center",
+  },
+
+  feedbackInput: {
+    width: "100%",
+    minHeight: 90,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 14,
+    color: "#111",
+    textAlignVertical: "top",
+    marginBottom: 18,
   },
 
   /* ===== Custom Alert Modal ===== */

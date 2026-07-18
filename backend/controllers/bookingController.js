@@ -1142,7 +1142,18 @@ const getMyBookings = async (req, res) => {
           booking.selectedTime
         );
         isPast = bookingDateTime.getTime() <= now;
-      } catch {
+      } catch (parseError) {
+        // Fixed: previously swallowed this silently and always
+        // defaulted to "past", which would misclassify every booking
+        // if selectedDate/selectedTime ever failed to parse. Logging
+        // it now so the real cause shows up in the backend console.
+        console.error(
+          "Failed to compute isPast for booking",
+          booking._id,
+          "date:", booking.selectedDate,
+          "time:", booking.selectedTime,
+          "error:", parseError.message
+        );
         isPast = true;
       }
 
@@ -1150,7 +1161,20 @@ const getMyBookings = async (req, res) => {
         isPast = true;
       }
 
-      return { ...booking, isPast };
+      // New: a booking whose date has passed but is still marked
+      // "Confirmed" (no staff action yet) is shown to the customer as
+      // "Awaiting Confirmation" rather than "Completed" — the system
+      // genuinely doesn't know what happened at the appointment until
+      // staff updates it, so it shouldn't claim otherwise. This is a
+      // display-only value; the real `status` field is left untouched
+      // in the database, and will simply stop matching this condition
+      // once staff-side sets a real status like "Completed".
+      const effectiveStatus =
+        booking.status === "Confirmed" && isPast
+          ? "Awaiting Confirmation"
+          : booking.status;
+
+      return { ...booking, isPast, effectiveStatus };
     });
 
     return res.status(200).json({
