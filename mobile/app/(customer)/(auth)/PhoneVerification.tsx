@@ -5,27 +5,67 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  Alert,
+  Modal,
   ActivityIndicator,
 } from "react-native";
-import { useState } from "react";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
+import { useRouter } from "expo-router";
+import { Ionicons, Feather } from "@expo/vector-icons";
+
+// Reads the same global object Register.tsx writes to — no import
+// path needed, avoids Metro resolution issues.
+declare global {
+  // eslint-disable-next-line no-var
+  var __pendingRegistration:
+    | { name: string; email: string; phone: string; password: string }
+    | null
+    | undefined;
+}
 
 const API_URL = "http://10.0.2.2:5000/api/customers";
+
+type AlertState = {
+  visible: boolean;
+  title: string;
+  message: string;
+};
 
 export default function EmailVerification() {
   const router = useRouter();
 
-  const { name, email, phone, password } = useLocalSearchParams();
-
-  const registeredEmail = typeof email === "string" ? email : "";
+  // Fixed: previously read name/email/phone/password from route
+  // params. Now reads from the in-memory registration holder set by
+  // Register.tsx, so nothing sensitive travels through navigation.
+  const pending = global.__pendingRegistration;
+  const registeredEmail = pending?.email ?? "";
 
   const [loading, setLoading] = useState(false);
 
+  const [alert, setAlert] = useState<AlertState>({
+    visible: false,
+    title: "",
+    message: "",
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlert({ visible: true, title, message });
+  };
+
+  const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
+
+  // Guard: if someone lands on this screen without having gone
+  // through Register first (e.g. app was reloaded mid-flow), there's
+  // no pending registration to verify — send them back to Register
+  // instead of showing a broken/empty screen.
+  useEffect(() => {
+    if (!pending) {
+      router.replace("/(customer)/(auth)/register");
+    }
+  }, [pending]);
+
   const sendOtp = async () => {
     if (!registeredEmail) {
-      Alert.alert("Error", "Email address is missing.");
+      showAlert("Missing Information", "Email address is missing.");
       return;
     }
 
@@ -45,27 +85,21 @@ export default function EmailVerification() {
       const data = await response.json();
 
       if (!response.ok) {
-        Alert.alert("Error", data.message || "Failed to send OTP");
+        showAlert("Error", data.message || "Failed to send OTP");
         return;
       }
 
-      Alert.alert("OTP Sent", "Please check your email for the OTP code.");
-
-      router.push({
-        pathname: "/(customer)/(auth)/VerifyOtp",
-        params: {
-          name,
-          email: registeredEmail,
-          phone,
-          password,
-        },
-      });
+      router.push("/(customer)/(auth)/VerifyOtp");
     } catch (error) {
-      Alert.alert("Error", "Unable to connect to server.");
+      showAlert("Connection Error", "Unable to connect to server.");
     } finally {
       setLoading(false);
     }
   };
+
+  if (!pending) {
+    return null; // redirecting via useEffect above
+  }
 
   return (
     <View style={styles.container}>
@@ -78,7 +112,7 @@ export default function EmailVerification() {
       </View>
 
       <View style={styles.card}>
-        <Ionicons name="mail-outline" size={60} color="#333" />
+        <Ionicons name="mail-outline" size={60} color="#fff" />
         <Text style={styles.heading}>Email Verification</Text>
         <Text style={styles.subText}>
           We will send a one-time password to verify your email address
@@ -96,6 +130,7 @@ export default function EmailVerification() {
       <TouchableOpacity
         style={[styles.button, loading && styles.disabledButton]}
         onPress={sendOtp}
+        activeOpacity={0.8}
         disabled={loading}
       >
         {loading ? (
@@ -104,6 +139,26 @@ export default function EmailVerification() {
           <Text style={styles.buttonText}>Send Email OTP</Text>
         )}
       </TouchableOpacity>
+
+      <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+
+            <View style={styles.modalIconCircle}>
+              <Feather name="alert-circle" size={28} color="#FF2D55" />
+            </View>
+
+            <Text style={styles.modalTitle}>{alert.title}</Text>
+            <Text style={styles.modalMessage}>{alert.message}</Text>
+
+            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -129,10 +184,10 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#ff1744",
+    color: "#FF2D55",
   },
   card: {
-    backgroundColor: "#D94A70",
+    backgroundColor: "#FF2D55",
     borderRadius: 16,
     padding: 30,
     alignItems: "center",
@@ -154,7 +209,7 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: "#ddd",
-    borderRadius: 10,
+    borderRadius: 14,
     padding: 14,
     marginBottom: 30,
     fontSize: 15,
@@ -162,9 +217,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8F8F8",
   },
   button: {
-    backgroundColor: "#FF2D75",
-    padding: 16,
-    borderRadius: 10,
+    backgroundColor: "#FF2D55",
+    paddingVertical: 16,
+    borderRadius: 25,
     alignItems: "center",
   },
   disabledButton: {
@@ -174,5 +229,55 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE5EA",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D55",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
   },
 });

@@ -12,13 +12,19 @@ export default function UserSelect() {
 
       <Text style={styles.title}>LIMO SALON</Text>
 
-      <TouchableOpacity style={styles.button}
-        onPress={() => router.push('/(customer)/(auth)/login')}>
+      <TouchableOpacity
+        style={styles.button}
+        activeOpacity={0.8}
+        onPress={() => router.push('/(customer)/(auth)/login')}
+      >
         <Text style={styles.buttonText}>Customer</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.button}
-        onPress={() => router.push("/(staff)")}>
+      <TouchableOpacity
+        style={styles.button}
+        activeOpacity={0.8}
+        onPress={() => router.push("/(staff)")}
+      >
         <Text style={styles.buttonText}>Staff</Text>
       </TouchableOpacity>
 
@@ -26,6 +32,10 @@ export default function UserSelect() {
   );
 }
 
+// =====================================================
+// App primary color: #FF2D75 (matches project design spec)
+// Keep this same hex across every screen for consistency.
+// =====================================================
 const styles = StyleSheet.create({
 
   container: {
@@ -45,16 +55,16 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#e53935',
+    color: '#FF2D75',
     marginBottom: 30,
     letterSpacing: 2,
   },
 
   button: {
     width: '75%',
-    backgroundColor: '#ff1744',
+    backgroundColor: '#FF2D75',
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: 25 ,
     marginTop: 15,
     alignItems: 'center',
     elevation: 3, // shadow for Android

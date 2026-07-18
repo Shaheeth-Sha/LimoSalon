@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,29 +6,73 @@ import {
   TouchableOpacity,
   StyleSheet,
   Image,
-  Alert,
+  Modal,
   ActivityIndicator,
 } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { Ionicons, Feather } from "@expo/vector-icons";
+
+// Reads/clears the same global object Register.tsx writes to — no
+// import path needed, avoids Metro resolution issues.
+declare global {
+  // eslint-disable-next-line no-var
+  var __pendingRegistration:
+    | { name: string; email: string; phone: string; password: string }
+    | null
+    | undefined;
+}
 
 const API_URL = "http://10.0.2.2:5000/api/customers";
+
+type AlertState = {
+  visible: boolean;
+  title: string;
+  message: string;
+};
 
 export default function VerifyOtp() {
   const router = useRouter();
 
-  const { name, email, phone, password } = useLocalSearchParams();
+  // Fixed: previously read name/email/phone/password from route
+  // params (password included). Now reads from the in-memory
+  // registration holder set by Register.tsx.
+  const pending = global.__pendingRegistration;
 
-  const registeredEmail = String(email || "");
-  const registeredName = String(name || "");
-  const registeredPhone = String(phone || "");
-  const registeredPassword = String(password || "");
+  const registeredEmail = pending?.email ?? "";
+  const registeredName = pending?.name ?? "";
+  const registeredPhone = pending?.phone ?? "";
+  const registeredPassword = pending?.password ?? "";
 
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
 
+  const [alert, setAlert] = useState<AlertState>({
+    visible: false,
+    title: "",
+    message: "",
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlert({ visible: true, title, message });
+  };
+
+  const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
+
   const inputs = useRef<Array<TextInput | null>>([]);
+
+  // Guard: if there's no pending registration (e.g. app reloaded
+  // mid-flow), there's nothing to verify — send back to Register.
+  // Fixed: excluded the showSuccess case. Previously, a successful
+  // verification cleared global.__pendingRegistration and then set
+  // showSuccess(true) in the same tick — the re-render saw pending
+  // as null and this effect fired, redirecting back to Register
+  // and wiping out the success modal before it could ever show.
+  useEffect(() => {
+    if (!pending && !showSuccess) {
+      router.replace("/(customer)/(auth)/register");
+    }
+  }, [pending, showSuccess]);
 
   const maskedEmail = registeredEmail
     ? registeredEmail.replace(/(.{2}).+(@.+)/, "$1******$2")
@@ -55,7 +99,7 @@ export default function VerifyOtp() {
     const finalOtp = otp.join("");
 
     if (finalOtp.length !== 6) {
-      Alert.alert("Error", "Enter 6 digit OTP");
+      showAlert("Incomplete Code", "Enter 6 digit OTP");
       return;
     }
 
@@ -76,7 +120,7 @@ export default function VerifyOtp() {
       const verifyData = await verifyRes.json();
 
       if (!verifyRes.ok) {
-        Alert.alert("Error", verifyData.message || "OTP verification failed");
+        showAlert("Verification Failed", verifyData.message || "OTP verification failed");
         return;
       }
 
@@ -96,13 +140,28 @@ export default function VerifyOtp() {
       const registerData = await registerRes.json();
 
       if (!registerRes.ok) {
-        Alert.alert("Error", registerData.message || "Registration failed");
+        // Fixed: previously left the already-consumed OTP digits sitting
+        // in the boxes. Since a successful verify-registration-otp call
+        // consumes the code server-side, retrying with the same digits
+        // would always fail with a confusing "Invalid OTP" on the next
+        // attempt. Now the boxes are cleared and the user is pointed to
+        // "Resend code" for a fresh one.
+        setOtp(["", "", "", "", "", ""]);
+        inputs.current[0]?.focus();
+        showAlert(
+          "Registration Failed",
+          `${registerData.message || "Registration failed"}\n\nYour code has already been used — tap "Resend code" to get a new one if you try again.`
+        );
         return;
       }
 
+      // Fixed: clear the in-memory registration data now that the
+      // account has been created — nothing sensitive should linger
+      // in memory once it's no longer needed.
+      global.__pendingRegistration = null;
       setShowSuccess(true);
     } catch (error) {
-      Alert.alert("Error", "Cannot connect to backend");
+      showAlert("Connection Error", "Cannot connect to backend");
     } finally {
       setLoading(false);
     }
@@ -125,17 +184,21 @@ export default function VerifyOtp() {
       const data = await res.json();
 
       if (!res.ok) {
-        Alert.alert("Error", data.message || "Failed to resend OTP");
+        showAlert("Error", data.message || "Failed to resend OTP");
         return;
       }
 
-      Alert.alert("OTP Sent", "Please check your email again.");
+      showAlert("OTP Sent", "Please check your email again.");
     } catch (error) {
-      Alert.alert("Error", "Cannot connect to backend");
+      showAlert("Connection Error", "Cannot connect to backend");
     } finally {
       setLoading(false);
     }
   };
+
+  if (!pending && !showSuccess) {
+    return null; // redirecting via useEffect above
+  }
 
   return (
     <View style={styles.container}>
@@ -148,7 +211,7 @@ export default function VerifyOtp() {
       </View>
 
       <View style={styles.card}>
-        <Ionicons name="mail-outline" size={70} color="#333" />
+        <Ionicons name="mail-outline" size={70} color="#fff" />
 
         <Text style={styles.heading}>Email Verification</Text>
 
@@ -182,13 +245,18 @@ export default function VerifyOtp() {
         ))}
       </View>
 
-      <TouchableOpacity onPress={resendOtp} disabled={loading}>
+      <TouchableOpacity
+        onPress={resendOtp}
+        disabled={loading}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
         <Text style={styles.resendText}>Resend code</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={[styles.button, loading && styles.disabledButton]}
         onPress={verifyOtp}
+        activeOpacity={0.8}
         disabled={loading}
       >
         {loading ? (
@@ -200,46 +268,77 @@ export default function VerifyOtp() {
 
       <TouchableOpacity
         style={styles.changeRow}
-        onPress={() =>
-          router.replace({
-            pathname: "/(customer)/(auth)/PhoneVerification",
-            params: {
-              name: registeredName,
-              email: registeredEmail,
-              phone: registeredPhone,
-              password: registeredPassword,
-            },
-          })
-        }
+        onPress={() => router.replace("/(customer)/(auth)/PhoneVerification")}
       >
         <Ionicons name="create-outline" size={18} color="#FF2D75" />
         <Text style={styles.changeText}>Change email address</Text>
       </TouchableOpacity>
 
+      {/* Success modal — restyled to match the app's branded modal
+          language (rounded card, icon circle, pill button) instead
+          of the previous heavy black-bordered box with a plain text
+          "Continue" link. */}
       {showSuccess && (
         <View style={styles.modalOverlay}>
           <View style={styles.successBox}>
-            <Text style={styles.successTitle}>
-              Account Created{"\n"}Successfully
-            </Text>
+
+            <View style={[styles.modalIconCircle, styles.successIconCircle]}>
+              <Feather name="check" size={28} color="#2ECC71" />
+            </View>
+
+            <Text style={styles.successTitle}>Account Created Successfully</Text>
 
             <Text style={styles.successMessage}>
-              Your account has been created.{"\n"}
-              You can now login.
+              Your account has been created. You can now login.
             </Text>
 
             <TouchableOpacity
+              style={styles.successButton}
+              activeOpacity={0.8}
               onPress={() => router.replace("/(customer)/(auth)/login")}
             >
-              <Text style={styles.successContinue}>Continue</Text>
+              <Text style={styles.successButtonText}>Continue</Text>
             </TouchableOpacity>
+
           </View>
         </View>
       )}
+
+      {/* Custom branded alert modal for errors/info — replaces Alert.alert() */}
+      <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+
+            <View style={styles.modalIconCircle}>
+              <Feather name="alert-circle" size={28} color="#FF2D75" />
+            </View>
+
+            <Text style={styles.modalTitle}>{alert.title}</Text>
+            <Text style={styles.modalMessage}>{alert.message}</Text>
+
+            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
 
+// =====================================================
+// App primary color: #FF2D75 (matches project design spec)
+// Was previously #ff1744 / #D96C91 / #FF2D75 / #408BFF in this
+// file — all fixed to the correct hex.
+// Removed fontFamily: "serif" from every text style — no other
+// screen in the app uses serif, so this screen looked visually
+// out of place. Now matches the system default sans-serif used
+// everywhere else.
+// Button/otp box radius and sizing brought in line with the
+// conventions used on Login/Register/EmailVerification.
+// =====================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -264,11 +363,11 @@ const styles = StyleSheet.create({
   logoText: {
     fontSize: 18,
     fontWeight: "bold",
-    color: "#ff1744",
+    color: "#FF2D75",
   },
 
   card: {
-    backgroundColor: "#D96C91",
+    backgroundColor: "#FF2D75",
     borderRadius: 16,
     paddingVertical: 32,
     paddingHorizontal: 22,
@@ -277,38 +376,33 @@ const styles = StyleSheet.create({
   },
 
   heading: {
-    fontSize: 30,
-    fontWeight: "800",
+    fontSize: 24,
+    fontWeight: "bold",
     color: "#fff",
-    marginTop: 18,
-    fontFamily: "serif",
+    marginTop: 15,
   },
 
   cardText: {
     color: "#fff",
     textAlign: "center",
     marginTop: 10,
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: "600",
-    fontFamily: "serif",
+    fontSize: 14,
+    lineHeight: 20,
   },
 
   sentText: {
     textAlign: "center",
-    fontSize: 16,
+    fontSize: 14,
     color: "#111",
-    fontFamily: "serif",
   },
 
   emailText: {
     textAlign: "center",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
     marginTop: 5,
     marginBottom: 25,
     color: "#111",
-    fontFamily: "serif",
   },
 
   otpRow: {
@@ -320,29 +414,30 @@ const styles = StyleSheet.create({
 
   otpBox: {
     width: 45,
-    height: 45,
-    borderRadius: 8,
-    backgroundColor: "#D1D1D1",
-    borderWidth: 1,
-    borderColor: "#D96C91",
+    height: 50,
+    borderRadius: 10,
+    backgroundColor: "#F8F8F8",
+    borderWidth: 1.5,
+    borderColor: "#FF2D75",
     textAlign: "center",
     fontSize: 20,
     fontWeight: "700",
+    color: "#111",
   },
 
   resendText: {
     textAlign: "center",
-    color: "#408BFF",
+    color: "#FF2D75",
+    fontWeight: "600",
     fontSize: 13,
     marginBottom: 15,
   },
 
   button: {
     backgroundColor: "#FF2D75",
-    padding: 16,
-    borderRadius: 8,
+    paddingVertical: 16,
+    borderRadius: 25,
     alignItems: "center",
-    marginHorizontal: 15,
   },
 
   disabledButton: {
@@ -351,7 +446,7 @@ const styles = StyleSheet.create({
 
   buttonText: {
     color: "#fff",
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: "700",
   },
 
@@ -374,37 +469,101 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.35)",
+    backgroundColor: "rgba(0,0,0,0.5)",
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 32,
   },
 
   successBox: {
-    width: "85%",
+    width: "100%",
     backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 25,
-    borderWidth: 2,
-    borderColor: "#111",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
   },
 
   successTitle: {
-    fontSize: 25,
-    fontWeight: "500",
+    fontSize: 17,
+    fontWeight: "bold",
     color: "#111",
-    marginBottom: 18,
+    marginBottom: 6,
+    textAlign: "center",
   },
 
   successMessage: {
-    fontSize: 18,
-    color: "#111",
-    lineHeight: 26,
-    marginBottom: 35,
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    lineHeight: 20,
+    marginBottom: 22,
   },
 
-  successContinue: {
-    textAlign: "right",
-    color: "#FF2D55",
-    fontSize: 18,
+  successButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+
+  successButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
+  },
+
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE1EC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+
+  successIconCircle: {
+    backgroundColor: "#E8F8EF",
+  },
+
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
   },
 });

@@ -1,12 +1,20 @@
 import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+// NOTE: requires 'react-native-safe-area-context' — already a dependency of
+// Expo Router projects by default, so no new install should be needed.
 
 export default function Welcome() {
+  const insets = useSafeAreaInsets();
+
   return (
     <View style={styles.container}>
 
-      {/* Top Curve */}
-      <View style={styles.topCurve} />
+      {/* Top Curve
+         Fixed: was a hardcoded 72.67px height that only matched the
+         Pixel 6 emulator's status bar. Now it grows with the real
+         device safe-area inset, so it lines up on notched phones too. */}
+      <View style={[styles.topCurve, { height: insets.top + 40 }]} />
 
       {/* Logo Section */}
       <View style={styles.logoContainer}>
@@ -23,8 +31,12 @@ export default function Welcome() {
         style={styles.mainImage}
       />
 
-      {/* Bottom Card */}
-      <View style={styles.bottomCard}>
+      {/* Bottom Card
+         Fixed: fixed paddingTop (150) + percentage height (50%) could
+         push the button off-screen on small devices. Switched to
+         justifyContent + safe-area bottom padding so content always
+         stays visible and centered regardless of screen size. */}
+      <View style={[styles.bottomCard, { paddingBottom: insets.bottom + 20 }]}>
 
         <Text style={styles.title}>
           Your beauty journey{'\n'}starts here
@@ -36,6 +48,7 @@ export default function Welcome() {
 
         <TouchableOpacity
           style={styles.button}
+          activeOpacity={0.8}
           onPress={() => router.push('/(customer)/(auth)/userSelect')}
         >
           <Text style={styles.buttonText}>GET STARTED</Text>
@@ -47,6 +60,10 @@ export default function Welcome() {
   );
 }
 
+// =====================================================
+// App primary color: #FF2D75 (matches project design spec)
+// Keep this same hex across every screen for consistency.
+// =====================================================
 const styles = StyleSheet.create({
 
   container: {
@@ -59,8 +76,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     width: '100%',
-    height: 72.67,
-    backgroundColor: '#f70954',
+    backgroundColor: '#FF2D75',
   },
 
   logoContainer: {
@@ -72,16 +88,15 @@ const styles = StyleSheet.create({
     width: 70,
     height: 70,
     resizeMode: 'contain',
-    marginTop:35,
+    marginTop: 35,
   },
 
   logoText: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#f70954',
+    color: '#FF2D75',
     marginTop: 5,
     letterSpacing: 2,
-    
   },
 
   mainImage: {
@@ -89,7 +104,7 @@ const styles = StyleSheet.create({
     height: 240,
     borderRadius: 25,
     marginTop: 50,
-    zIndex:10,
+    zIndex: 10,
     resizeMode: 'contain',
   },
 
@@ -97,11 +112,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 0,
     width: '100%',
-    height: '50%',
-    backgroundColor: '#f70954',
+    minHeight: '48%',
+    backgroundColor: '#FF2D75',
     alignItems: 'center',
-    paddingTop: 150,
-    zIndex:1,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+    zIndex: 1,
   },
 
   title: {
@@ -118,7 +134,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingHorizontal: 25,
     lineHeight: 18,
-  
   },
 
   button: {
@@ -130,7 +145,7 @@ const styles = StyleSheet.create({
   },
 
   buttonText: {
-    color: '#F70954',
+    color: '#FF2D75',
     fontWeight: 'bold',
   },
 });

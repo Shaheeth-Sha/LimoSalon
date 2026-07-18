@@ -4,18 +4,173 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Modal,
 } from "react-native";
-import { useState } from "react";
-import { Ionicons } from "@expo/vector-icons";
+import { useEffect, useState } from "react";
+import { Ionicons, Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const BASE_URL = "http://10.0.2.2:5000";
+const MY_BOOKINGS_API = `${BASE_URL}/api/bookings/my-bookings`;
+const CANCEL_BOOKING_API = (bookingId: string) =>
+  `${BASE_URL}/api/bookings/${bookingId}/cancel`;
+
+type Booking = {
+  _id: string;
+  services: { name: string }[];
+  staff: { name: string };
+  selectedDate: string;
+  selectedTime: string;
+  totalAmount: number;
+  status: string;
+  paymentStatus: string;
+  isPast: boolean;
+};
+
+type AlertState = {
+  visible: boolean;
+  title: string;
+  message: string;
+};
+
+// Fixed: previously two hardcoded cards for "Upcoming" and two more
+// for "Past" — nothing here was real data. Now fetches the logged-in
+// customer's actual bookings from the backend and renders whatever
+// comes back, split into the same two tabs using the isPast flag the
+// new /my-bookings endpoint computes server-side.
 export default function Bookings() {
-  const [activeTab, setActiveTab] = useState("upcoming");
+  const [activeTab, setActiveTab] = useState<"upcoming" | "past">("upcoming");
   const router = useRouter();
+
+  const [loading, setLoading] = useState(true);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const [alert, setAlert] = useState<AlertState>({
+    visible: false,
+    title: "",
+    message: "",
+  });
+
+  const showAlert = (title: string, message: string) => {
+    setAlert({ visible: true, title, message });
+  };
+
+  const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
+
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadBookings();
+  }, []);
+
+  const loadBookings = async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem("customerToken");
+
+      if (!token) {
+        showAlert("Not Logged In", "Please log in to view your bookings.");
+        return;
+      }
+
+      const res = await fetch(MY_BOOKINGS_API, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        // Response wasn't JSON at all (e.g. a 404 HTML page from a
+        // route that doesn't exist yet) — status code alone still
+        // tells us something useful below.
+      }
+
+      if (!res.ok) {
+        throw new Error(
+          data.message || `Request failed with status ${res.status}`
+        );
+      }
+
+      setBookings(Array.isArray(data.bookings) ? data.bookings : []);
+    } catch (error: any) {
+      console.log("Load bookings error:", error);
+      showAlert("Error", `Unable to load your bookings.\n\n${error?.message || ""}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runCancelBooking = async (bookingId: string) => {
+    try {
+      setCancellingId(bookingId);
+      const token = await AsyncStorage.getItem("customerToken");
+
+      const res = await fetch(CANCEL_BOOKING_API(bookingId), {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Failed to cancel booking");
+      }
+
+      // Update locally instead of re-fetching everything, so the
+      // screen responds instantly.
+      setBookings((prev) =>
+        prev.map((b) =>
+          b._id === bookingId ? { ...b, status: "Cancelled", isPast: true } : b
+        )
+      );
+
+      showAlert("Booking Cancelled", "Your booking has been cancelled.");
+    } catch (error) {
+      console.log("Cancel booking error:", error);
+      showAlert("Error", "Unable to cancel this booking.");
+    } finally {
+      setCancellingId(null);
+      setConfirmCancelId(null);
+    }
+  };
+
+  const formatDate = (dateStr: string) => {
+    try {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const upcomingBookings = bookings.filter((b) => !b.isPast);
+  const pastBookings = bookings.filter((b) => b.isPast);
+
+  const visibleBookings = activeTab === "upcoming" ? upcomingBookings : pastBookings;
+
+  const getStatusPillStyle = (status: string) => {
+    if (status === "Cancelled") return styles.cancelPill;
+    if (status === "Completed") return styles.completedPill;
+    return styles.statusPill;
+  };
 
   return (
     <View style={styles.container}>
-      
       {/* Header */}
       <View style={styles.headerRow}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -64,94 +219,161 @@ export default function Bookings() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false}>
+      {loading ? (
+        <View style={styles.loader}>
+          <ActivityIndicator size="large" color="#FF2D75" />
+        </View>
+      ) : visibleBookings.length === 0 ? (
+        <View style={styles.loader}>
+          <Text style={styles.emptyText}>
+            {activeTab === "upcoming"
+              ? "You have no upcoming bookings."
+              : "You have no past bookings yet."}
+          </Text>
+        </View>
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false}>
+          {visibleBookings.map((booking) => {
+            const serviceNames = (booking.services || [])
+              .map((s) => s.name)
+              .filter(Boolean)
+              .join(", ");
 
-        {/* UPCOMING */}
-        {activeTab === "upcoming" && (
-          <View style={styles.card}>
-            <View style={styles.rowBetween}>
-              <View style={styles.statusPill}>
-                <Text style={styles.statusText}>Confirmed</Text>
+            return (
+              <View key={booking._id} style={styles.card}>
+                <View style={styles.rowBetween}>
+                  <View style={getStatusPillStyle(booking.status)}>
+                    <Text style={styles.statusText}>{booking.status}</Text>
+                  </View>
+                  <Text style={styles.priceTop}>
+                    LKR {booking.totalAmount?.toLocaleString()}
+                  </Text>
+                </View>
+
+                <Text style={styles.title}>{serviceNames || "Service"}</Text>
+                {booking.staff?.name ? (
+                  <Text style={styles.sub}>With {booking.staff.name}</Text>
+                ) : null}
+
+                <Text style={styles.info}>📅 {formatDate(booking.selectedDate)}</Text>
+                <Text style={styles.info}>⏰ {booking.selectedTime}</Text>
+
+                {booking.paymentStatus && booking.paymentStatus !== "Paid" && (
+                  <Text style={styles.paymentNote}>
+                    Payment: {booking.paymentStatus}
+                  </Text>
+                )}
+
+                <View style={styles.rowBetween}>
+                  <Text style={styles.priceBottom}>
+                    LKR {booking.totalAmount?.toLocaleString()}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      showAlert("Booking Details", "Full details view is coming soon.")
+                    }
+                  >
+                    <Text style={styles.viewDetails}>View Details</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {activeTab === "upcoming" && booking.status !== "Cancelled" && (
+                  <View style={styles.rowBetween}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      activeOpacity={0.8}
+                      disabled={cancellingId === booking._id}
+                      onPress={() => setConfirmCancelId(booking._id)}
+                    >
+                      <Text style={styles.cancelText}>
+                        {cancellingId === booking._id ? "Cancelling..." : "Cancel"}
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.rescheduleBtn}
+                      activeOpacity={0.8}
+                      onPress={() =>
+                        showAlert("Reschedule", "This feature is coming soon.")
+                      }
+                    >
+                      <Text style={styles.rescheduleText}>Reschedule</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {activeTab === "past" && booking.status === "Completed" && (
+                  <TouchableOpacity
+                    style={styles.feedbackBtn}
+                    activeOpacity={0.8}
+                    onPress={() => showAlert("Feedback", "This feature is coming soon.")}
+                  >
+                    <Text style={styles.feedbackText}>Leave Feedback</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <Text style={styles.priceTop}>LKR,5300</Text>
+            );
+          })}
+        </ScrollView>
+      )}
+
+      {/* Cancel confirmation modal */}
+      <Modal
+        visible={!!confirmCancelId}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setConfirmCancelId(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconCircle}>
+              <Feather name="alert-triangle" size={28} color="#FF2D75" />
             </View>
-
-            <Text style={styles.title}>Glow Signature Facial</Text>
-            <Text style={styles.sub}>With Olivia Dias</Text>
-
-            <Text style={styles.info}>📅 Wed, March 25 2026</Text>
-            <Text style={styles.info}>⏰ 10.00 a.m</Text>
-
-            <View style={styles.rowBetween}>
-              <Text style={styles.priceBottom}>LKR,5300</Text>
-              <TouchableOpacity>
-                <Text style={styles.viewDetails}>View Details</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.rowBetween}>
-              <TouchableOpacity style={styles.cancelBtn}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.rescheduleBtn}>
-                <Text style={styles.rescheduleText}>Reschedule</Text>
-              </TouchableOpacity>
-            </View>
+            <Text style={styles.modalTitle}>Cancel this booking?</Text>
+            <Text style={styles.modalMessage}>
+              This can't be undone. You'll need to book again if you change your mind.
+            </Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.8}
+              onPress={() => confirmCancelId && runCancelBooking(confirmCancelId)}
+            >
+              <Text style={styles.modalButtonText}>Yes, Cancel Booking</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalButtonSecondary}
+              activeOpacity={0.8}
+              onPress={() => setConfirmCancelId(null)}
+            >
+              <Text style={styles.modalButtonSecondaryText}>Keep Booking</Text>
+            </TouchableOpacity>
           </View>
-        )}
+        </View>
+      </Modal>
 
-        {/* PAST */}
-        {activeTab === "past" && (
-          <>
-            {/* Completed */}
-            <View style={styles.card}>
-              <View style={styles.rowBetween}>
-                <View style={styles.completedPill}>
-                  <Text style={styles.statusText}>Completed</Text>
-                </View>
-                <Text style={styles.priceTop}>LKR,3500</Text>
-              </View>
-
-              <Text style={styles.title}>HairCut & Style</Text>
-
-              <Text style={styles.info}>📅 Tue, Feb 10 2026</Text>
-              <Text style={styles.info}>⏰ 02.30 p.m</Text>
-
-              <View style={styles.rowBetween}>
-                <Text style={styles.priceBottom}>LKR,3500</Text>
-                <TouchableOpacity>
-                  <Text style={styles.viewDetails}>View Details</Text>
-                </TouchableOpacity>
-              </View>
-
-              <TouchableOpacity style={styles.feedbackBtn}>
-                <Text style={styles.feedbackText}>Leave Feedback</Text>
-              </TouchableOpacity>
+      {/* Custom branded alert modal — replaces Alert.alert() */}
+      <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconCircle}>
+              <Feather name="info" size={28} color="#FF2D75" />
             </View>
-
-            {/* Cancelled */}
-            <View style={styles.card}>
-              <View style={styles.rowBetween}>
-                <View style={styles.cancelPill}>
-                  <Text style={styles.statusText}>Cancel</Text>
-                </View>
-                <Text style={styles.priceTop}>LKR,5500</Text>
-              </View>
-
-              <Text style={styles.title}>Swedish Massage</Text>
-              <Text style={styles.sub}>With maya Perera</Text>
-
-              <Text style={styles.info}>📅 Fri, Dec 15 2025</Text>
-            </View>
-          </>
-        )}
-
-      </ScrollView>
+            <Text style={styles.modalTitle}>{alert.title}</Text>
+            <Text style={styles.modalMessage}>{alert.message}</Text>
+            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
+// =====================================================
+// App primary color: #FF2D75 (matches project design spec)
+// Was #ff2d55 in several places — fixed to the correct hex.
+// =====================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -172,7 +394,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  /* Toggle */
   toggleWrapper: {
     flexDirection: "row",
     backgroundColor: "#fff",
@@ -189,7 +410,7 @@ const styles = StyleSheet.create({
   },
 
   activeBtn: {
-    backgroundColor: "#ff2d55",
+    backgroundColor: "#FF2D75",
   },
 
   toggleText: {
@@ -202,7 +423,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  /* Card */
   card: {
     backgroundColor: "#d86a86",
     borderRadius: 18,
@@ -232,6 +452,13 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
+  paymentNote: {
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: "600",
+    color: "#5A1020",
+  },
+
   priceTop: {
     fontSize: 12,
   },
@@ -241,12 +468,12 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
 
-  /* Pills */
   statusPill: {
     backgroundColor: "#fff",
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,
+    alignSelf: "flex-start",
   },
 
   completedPill: {
@@ -254,6 +481,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,
+    alignSelf: "flex-start",
   },
 
   cancelPill: {
@@ -261,6 +489,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,
+    alignSelf: "flex-start",
   },
 
   statusText: {
@@ -272,12 +501,12 @@ const styles = StyleSheet.create({
     textDecorationLine: "underline",
   },
 
-  /* Buttons */
   feedbackBtn: {
-    backgroundColor: "#ff2d55",
+    backgroundColor: "#FF2D75",
     paddingVertical: 10,
     borderRadius: 8,
     alignItems: "center",
+    marginTop: 10,
   },
 
   feedbackText: {
@@ -297,7 +526,7 @@ const styles = StyleSheet.create({
   },
 
   rescheduleBtn: {
-    backgroundColor: "#ff2d55",
+    backgroundColor: "#FF2D75",
     paddingVertical: 8,
     paddingHorizontal: 20,
     borderRadius: 8,
@@ -306,5 +535,88 @@ const styles = StyleSheet.create({
   rescheduleText: {
     color: "#fff",
     fontSize: 12,
+  },
+
+  loader: {
+    marginTop: 80,
+    alignItems: "center",
+    paddingHorizontal: 30,
+  },
+
+  emptyText: {
+    color: "#777",
+    fontSize: 14,
+    textAlign: "center",
+  },
+
+  /* ===== Custom Alert Modal ===== */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE1EC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
+  },
+
+  modalButtonSecondary: {
+    width: "100%",
+    paddingVertical: 13,
+    alignItems: "center",
+    marginTop: 4,
+  },
+
+  modalButtonSecondaryText: {
+    color: "#777",
+    fontWeight: "600",
+    fontSize: 14,
   },
 });
