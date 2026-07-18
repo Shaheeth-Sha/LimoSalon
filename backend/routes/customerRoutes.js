@@ -9,6 +9,8 @@ const {
   getCustomerProfile,
   sendRegistrationOtp,
   verifyRegistrationOtp,
+  forgotPassword,
+  resetPassword,
 } = require("../controllers/customerController");
 
 
@@ -23,5 +25,7 @@ router.post("/verify-otp", verifyOtp);
 router.get("/profile", protectCustomer, getCustomerProfile);
 router.post("/send-registration-otp", sendRegistrationOtp);
 router.post("/verify-registration-otp", verifyRegistrationOtp);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 module.exports = router;

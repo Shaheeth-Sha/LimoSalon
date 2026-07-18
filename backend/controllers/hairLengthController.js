@@ -12,4 +12,4 @@ const getHairLengths = async (req, res) => {
   }
 };
 
-module.exports = { getHairLengths };
+module.exports = { getHairLengths }; 

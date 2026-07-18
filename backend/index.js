@@ -13,11 +13,21 @@ const hairLengthRoutes = require("./routes/hairLengthRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
+const stripeRoutes = require("./routes/stripeRoutes");
 
 const app = express();
 
 // Middleware
 app.use(cors());
+
+//Stripe webhook needs raw body
+app.use(
+  "/api/stripe",
+  express.raw({
+    type: "application/json"
+  })
+);
+
 app.use(express.json());
 
 // Connect MongoDB
@@ -34,7 +44,7 @@ app.use("/api/hair-lengths", hairLengthRoutes);
 app.use("/api/staff", staffRoutes);
 app.use("/api/bookings", bookingRoutes)
 app.use("/api/payments", paymentRoutes);
-
+app.use("/api/stripe", stripeRoutes);
 
 const PORT = process.env.PORT || 5000;
 

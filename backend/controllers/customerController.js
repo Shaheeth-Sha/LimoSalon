@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const Customer = require("../models/Customer");
 const EmailOtp = require("../models/EmailOtp");
@@ -289,6 +290,153 @@ const verifyOtp = async (req, res) => {
   });
 };
 
+/* =========================
+   FORGOT PASSWORD - SEND RESET LINK
+========================= */
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const customer = await Customer.findOne({ email: normalizedEmail });
+
+    // Always respond with success even if the email isn't registered —
+    // prevents this endpoint being used to check which emails have accounts.
+    if (!customer) {
+      return res.status(200).json({
+        success: true,
+        message: "If that email is registered, a reset link has been sent.",
+      });
+    }
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    await EmailOtp.deleteMany({
+      email: normalizedEmail,
+      purpose: "password-reset",
+    });
+
+    await EmailOtp.create({
+      email: normalizedEmail,
+      otp: resetToken,
+      purpose: "password-reset",
+      verified: false,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 min
+    });
+
+   const resetLink = `https://limosalon-reset-page.vercel.app/?token=${resetToken}&email=${encodeURIComponent(
+  normalizedEmail
+)}`;
+
+    await sendEmail({
+      to: normalizedEmail,
+      subject: "LimoSalon Password Reset",
+      html: `
+        <h2>Reset your LimoSalon password</h2>
+        <p>Tap the link below on your mobile device to reset your password:</p>
+        <p><a href="${resetLink}">${resetLink}</a></p>
+        <p>This link expires in 15 minutes. If you didn't request this, you can safely ignore this email.</p>
+      `,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "If that email is registered, a reset link has been sent.",
+    });
+  } catch (error) {
+    console.error("Forgot password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to process password reset request",
+      error: error.message,
+    });
+  }
+};
+
+/* =========================
+   RESET PASSWORD - VERIFY TOKEN + SET NEW PASSWORD
+========================= */
+const resetPassword = async (req, res) => {
+  try {
+    const { email, token, newPassword } = req.body;
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, token and new password are required",
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const record = await EmailOtp.findOne({
+      email: normalizedEmail,
+      otp: token,
+      purpose: "password-reset",
+    });
+
+    if (!record) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset link",
+      });
+    }
+
+    if (record.expiresAt < new Date()) {
+      await record.deleteOne();
+      return res.status(400).json({
+        success: false,
+        message: "Reset link has expired. Please request a new one.",
+      });
+    }
+
+    const customer = await Customer.findOne({ email: normalizedEmail });
+
+    if (!customer) {
+      return res.status(404).json({
+        success: false,
+        message: "Account not found",
+      });
+    }
+
+    customer.password = await bcrypt.hash(newPassword, 10);
+    await customer.save();
+
+    // Single-use link — remove it once used.
+    await EmailOtp.deleteMany({
+      email: normalizedEmail,
+      purpose: "password-reset",
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Password reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to reset password",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   registerCustomer,
   loginCustomer,
@@ -297,4 +445,6 @@ module.exports = {
   sendOtp,
   verifyOtp,
   getCustomerProfile,
+  forgotPassword,
+  resetPassword,
 };
