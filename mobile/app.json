@@ -26,8 +26,6 @@
       "output": "static",
       "favicon": "./assets/images/favicon.png"
     },
-
-    
     "plugins": [
       "expo-router",
       [
@@ -50,9 +48,9 @@
           "merchantIdentifier": "merchant.com.limosalon",
           "enableGooglePay": true
         }
-      ]
+      ],
+      "@react-native-google-signin/google-signin"
     ],
-
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
