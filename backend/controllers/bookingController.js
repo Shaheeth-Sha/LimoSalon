@@ -2,6 +2,8 @@ const crypto = require("crypto");
 
 const Booking = require("../models/Booking");
 const BookingHold = require("../models/BookingHold");
+const Customer = require("../models/Customer");
+const sendEmail = require("../utils/sendEmail");
 
 const HOLD_DURATION_MINUTES = 10;
 const SLOT_INTERVAL_MINUTES = 15;
@@ -24,6 +26,99 @@ const roundMoney = (value) => {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 };
 
+const formatMoneyForEmail = (amount) =>
+  `LKR ${Number(amount || 0).toLocaleString("en-LK", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const formatDateForEmail = (dateStr) => {
+  try {
+    const [year, month, day] = String(dateStr).split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
+// New: sends a booking confirmation/reschedule email using the
+// existing sendEmail util (same Nodemailer transporter already used
+// for OTP emails). Wrapped in try/catch wherever it's called so an
+// email failure can NEVER cause the booking/reschedule itself to
+// fail — the booking is the important transaction, the email is a
+// notification on top of it.
+const buildBookingEmailHtml = ({ customerName, booking, isReschedule, previousDate, previousTime }) => {
+  const serviceRows = (booking.services || [])
+    .map(
+      (service) =>
+        `<tr><td style="padding:4px 0;">${service.name}</td><td style="padding:4px 0;text-align:right;">${formatMoneyForEmail(service.price)}</td></tr>`
+    )
+    .join("");
+
+  const rescheduleNote = isReschedule
+    ? `<p style="color:#8A1230;background:#FFF3F6;padding:10px 14px;border-radius:8px;">
+         Your appointment was moved from <strong>${formatDateForEmail(previousDate)} at ${previousTime}</strong> to the new time below.
+       </p>`
+    : "";
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;color:#111;">
+      <h2 style="color:#FF2D75;">${isReschedule ? "Your Appointment Has Been Rescheduled" : "Booking Confirmed"}</h2>
+      <p>Hi ${customerName || "there"},</p>
+      <p>${isReschedule
+        ? "Here are your updated appointment details:"
+        : "Thank you for booking with LimoSalon. Here are your appointment details:"}</p>
+      ${rescheduleNote}
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+        ${serviceRows}
+      </table>
+      <p><strong>Staff:</strong> ${booking.staff?.name || "-"}</p>
+      <p><strong>Date:</strong> ${formatDateForEmail(booking.selectedDate)}</p>
+      <p><strong>Time:</strong> ${booking.selectedTime}</p>
+      <p><strong>Total:</strong> ${formatMoneyForEmail(booking.totalAmount)}</p>
+      <p><strong>Amount Paid:</strong> ${formatMoneyForEmail(booking.amountPaid)}</p>
+      <p><strong>Balance Due:</strong> ${formatMoneyForEmail(booking.balancePayment)}</p>
+      <p><strong>Payment Status:</strong> ${booking.paymentStatus}</p>
+      <p style="color:#777;font-size:13px;">Booking ID: #${String(booking._id).slice(-6).toUpperCase()}</p>
+      <p style="margin-top:24px;color:#777;font-size:13px;">See you soon at LimoSalon!</p>
+    </div>
+  `;
+};
+
+const sendBookingEmail = async ({ customerId, booking, isReschedule, previousDate, previousTime }) => {
+  try {
+    const customer = await Customer.findById(customerId).select("email name").lean();
+
+    if (!customer?.email) {
+      return;
+    }
+
+    await sendEmail({
+      to: customer.email,
+      subject: isReschedule
+        ? "Your LimoSalon Appointment Has Been Rescheduled"
+        : "Your LimoSalon Booking is Confirmed",
+      html: buildBookingEmailHtml({
+        customerName: customer.name,
+        booking,
+        isReschedule,
+        previousDate,
+        previousTime,
+      }),
+    });
+  } catch (emailError) {
+    // Deliberately swallowed: a failed confirmation email should
+    // never cause the booking/reschedule itself to fail or roll back.
+    console.error("Booking email failed to send:", emailError);
+  }
+};
+
 const escapeRegex = (value) => {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
@@ -32,28 +127,37 @@ const getCustomerId = (req) => {
   return req.customer?._id || req.customer?.id || null;
 };
 
-const containsBridalService = (services, bookingType) => {
+// Fixed: previously this only ever detected "bridal" vs. everything
+// else, so Face and Body bookings were silently saved as "hair" —
+// and the schema's enum used to only allow "hair"/"bridal" anyway,
+// so this couldn't have worked even if it tried. Now that the schema
+// accepts "face"/"body" too, this properly classifies all four.
+// Checks bookingType directly first (most reliable, since the
+// frontend should be sending the actual category), and only falls
+// back to scanning the service data as a backup.
+const detectServiceCategory = (services, bookingType) => {
   const normalizedBookingType = String(bookingType || "")
     .trim()
     .toLowerCase();
 
-  if (normalizedBookingType === "bridal") {
-    return true;
+  if (["bridal", "hair", "face", "body"].includes(normalizedBookingType)) {
+    return normalizedBookingType;
   }
 
-  if (!services) {
-    return false;
-  }
+  let serviceText = "";
 
   try {
-    return JSON.stringify(services)
-      .toLowerCase()
-      .includes("bridal");
+    serviceText = JSON.stringify(services).toLowerCase();
   } catch {
-    return String(services)
-      .toLowerCase()
-      .includes("bridal");
+    serviceText = String(services).toLowerCase();
   }
+
+  if (serviceText.includes("bridal")) return "bridal";
+  if (serviceText.includes("face") || serviceText.includes("facial")) return "face";
+  if (serviceText.includes("body")) return "body";
+  if (serviceText.includes("hair")) return "hair";
+
+  return "hair";
 };
 
 const normalizeBookingDate = (value) => {
@@ -307,8 +411,9 @@ const findConfirmedBookingConflict = async ({
   selectedDate,
   selectedTime,
   estimatedDuration,
+  excludeBookingId,
 }) => {
-  const existingBookings = await Booking.find({
+  const query = {
     "staff.staffId": staffId,
     selectedDate: {
       $regex: `^${escapeRegex(selectedDate)}`,
@@ -316,7 +421,20 @@ const findConfirmedBookingConflict = async ({
     status: {
       $nin: ["Cancelled"],
     },
-  })
+  };
+
+  // New: when rescheduling, the booking being moved still exists in
+  // the database under its OLD date/time. If the new date happens to
+  // be the same calendar day, this query would otherwise find the
+  // booking's own current record and could incorrectly treat it as a
+  // conflict with itself. Excluding it here only affects callers that
+  // explicitly pass excludeBookingId (i.e. reschedule) — every
+  // existing call site is unaffected.
+  if (excludeBookingId) {
+    query._id = { $ne: excludeBookingId };
+  }
+
+  const existingBookings = await Booking.find(query)
     .select("selectedTime estimatedDuration status")
     .lean();
 
@@ -393,14 +511,10 @@ const calculatePaymentDetails = ({
     throw new Error("A valid total amount is required");
   }
 
-  const isBridal = containsBridalService(
-    services,
-    bookingType
-  );
+  const serviceCategory = detectServiceCategory(services, bookingType);
+  const isBridal = serviceCategory === "bridal";
 
-  const normalizedBookingType = isBridal
-    ? "bridal"
-    : "hair";
+  const normalizedBookingType = serviceCategory;
 
   const paymentOption = String(
     requestedPaymentOption || ""
@@ -548,6 +662,7 @@ const createBookingHold = async (req, res) => {
       selectedDate,
       selectedTime,
       estimatedDuration,
+      excludeBookingId,
     } = req.body;
 
     const normalizedStaffId = String(staffId || "").trim();
@@ -585,6 +700,10 @@ const createBookingHold = async (req, res) => {
         selectedDate: normalizedDate,
         selectedTime: normalizedTime,
         estimatedDuration: duration,
+        // New: when this hold is being created as part of a
+        // reschedule, the booking being moved should not count as a
+        // conflict against its own current slot.
+        excludeBookingId: excludeBookingId || undefined,
       });
 
     if (confirmedConflict) {
@@ -1046,6 +1165,10 @@ const createBooking = async (req, res) => {
     });
 
     
+    // New: send a booking confirmation email. Wrapped internally so
+    // any email failure can't affect this response.
+    await sendBookingEmail({ customerId, booking });
+
     return res.status(201).json({
       success: true,
       message: "Booking created successfully",
@@ -1143,10 +1266,6 @@ const getMyBookings = async (req, res) => {
         );
         isPast = bookingDateTime.getTime() <= now;
       } catch (parseError) {
-        // Fixed: previously swallowed this silently and always
-        // defaulted to "past", which would misclassify every booking
-        // if selectedDate/selectedTime ever failed to parse. Logging
-        // it now so the real cause shows up in the backend console.
         console.error(
           "Failed to compute isPast for booking",
           booking._id,
@@ -1161,14 +1280,6 @@ const getMyBookings = async (req, res) => {
         isPast = true;
       }
 
-      // New: a booking whose date has passed but is still marked
-      // "Confirmed" (no staff action yet) is shown to the customer as
-      // "Awaiting Confirmation" rather than "Completed" — the system
-      // genuinely doesn't know what happened at the appointment until
-      // staff updates it, so it shouldn't claim otherwise. This is a
-      // display-only value; the real `status` field is left untouched
-      // in the database, and will simply stop matching this condition
-      // once staff-side sets a real status like "Completed".
       const effectiveStatus =
         booking.status === "Confirmed" && isPast
           ? "Awaiting Confirmation"
@@ -1255,6 +1366,176 @@ const cancelBooking = async (req, res) => {
   }
 };
 
+/* -------------------------------------------------------------------------- */
+/*                         Reschedule an existing booking                     */
+/* -------------------------------------------------------------------------- */
+
+// New: reuses the same hold system as the original booking flow.
+// Expected client flow:
+//   1. Customer picks a new date/time for the SAME staff member
+//      (staff and services stay the same — only date/time change).
+//   2. Client calls POST /hold (createBookingHold, already existing)
+//      with that staffId/date/time/duration to temporarily reserve it,
+//      passing excludeBookingId so it never conflicts with its own
+//      current slot.
+//   3. Client calls this endpoint with { holdId } to atomically move
+//      the existing booking to the held slot.
+const rescheduleBooking = async (req, res) => {
+  let consumedHold = null;
+
+  try {
+    const customerId = getCustomerId(req);
+    const { bookingId } = req.params;
+    const { holdId } = req.body;
+
+    if (!customerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Customer authentication is required",
+      });
+    }
+
+    if (!holdId) {
+      return res.status(400).json({
+        success: false,
+        message: "A valid temporary hold on the new time is required",
+      });
+    }
+
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      customer: customerId,
+    });
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found",
+      });
+    }
+
+    if (booking.status === "Cancelled") {
+      return res.status(400).json({
+        success: false,
+        message: "Cancelled bookings cannot be rescheduled",
+      });
+    }
+
+    if (booking.status === "Completed") {
+      return res.status(400).json({
+        success: false,
+        message: "Completed bookings cannot be rescheduled",
+      });
+    }
+
+    const hold = await BookingHold.findOne({
+      _id: holdId,
+      customer: customerId,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!hold) {
+      return res.status(409).json({
+        success: false,
+        message: "Your temporary hold on the new time has expired. Please pick a time again.",
+      });
+    }
+
+    if (String(hold.staffId) !== String(booking.staff.staffId)) {
+      return res.status(400).json({
+        success: false,
+        message: "The reserved time is for a different staff member than this booking",
+      });
+    }
+
+    const confirmedConflict = await findConfirmedBookingConflict({
+      staffId: booking.staff.staffId,
+      selectedDate: hold.selectedDate,
+      selectedTime: hold.selectedTime,
+      estimatedDuration: hold.estimatedDuration,
+      excludeBookingId: booking._id,
+    });
+
+    if (confirmedConflict) {
+      return res.status(409).json({
+        success: false,
+        message: "This staff member is no longer available for the selected time",
+      });
+    }
+
+    consumedHold = await BookingHold.findOneAndDelete({
+      _id: holdId,
+      customer: customerId,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!consumedHold) {
+      return res.status(409).json({
+        success: false,
+        message: "The reserved time is no longer available. Please select it again.",
+      });
+    }
+
+    // New: keep a record of what this booking's date/time was before
+    // this reschedule, for dispute resolution / support / policy
+    // enforcement later. Purely additive — an array that only ever
+    // gets appended to, never mutated.
+    const previousDate = booking.selectedDate;
+    const previousTime = booking.selectedTime;
+
+    booking.rescheduleHistory = booking.rescheduleHistory || [];
+    booking.rescheduleHistory.push({
+      previousDate: booking.selectedDate,
+      previousTime: booking.selectedTime,
+      rescheduledAt: new Date(),
+    });
+
+    booking.selectedDate = consumedHold.selectedDate;
+    booking.selectedTime = consumedHold.selectedTime;
+    await booking.save();
+
+    // New: send a reschedule notification email with the old and new
+    // times. Wrapped internally so any email failure can't affect
+    // this response.
+    await sendBookingEmail({
+      customerId,
+      booking,
+      isReschedule: true,
+      previousDate,
+      previousTime,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Booking rescheduled successfully",
+      booking,
+    });
+  } catch (error) {
+    console.error("Reschedule booking error:", error);
+
+    if (consumedHold && consumedHold.expiresAt.getTime() > Date.now()) {
+      try {
+        await BookingHold.create({
+          customer: consumedHold.customer,
+          staffId: consumedHold.staffId,
+          selectedDate: consumedHold.selectedDate,
+          selectedTime: consumedHold.selectedTime,
+          estimatedDuration: consumedHold.estimatedDuration,
+          slotKeys: consumedHold.slotKeys,
+          expiresAt: consumedHold.expiresAt,
+        });
+      } catch (restoreError) {
+        console.error("Unable to restore booking hold:", restoreError);
+      }
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Unable to reschedule the booking",
+    });
+  }
+};
+
 module.exports = {
   createBooking,
   createBookingHold,
@@ -1262,4 +1543,5 @@ module.exports = {
   getBookingAvailability,
   getMyBookings,
   cancelBooking,
+  rescheduleBooking,
 };

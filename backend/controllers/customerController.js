@@ -5,7 +5,9 @@ const crypto = require("crypto");
 const Customer = require("../models/Customer");
 const EmailOtp = require("../models/EmailOtp");
 const sendEmail = require("../utils/sendEmail");
+const { OAuth2Client } = require("google-auth-library");
 
+const googleClient = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID);
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET || "limosalon_secret", {
     expiresIn: "7d",
@@ -437,6 +439,124 @@ const resetPassword = async (req, res) => {
   }
 };
 
+/* =========================
+   GOOGLE SIGN-IN (LOGIN OR REGISTER)
+========================= */
+const googleAuth = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Google ID token is required",
+      });
+    }
+
+    // Verify the token actually came from Google and was issued for our app
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_WEB_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const normalizedEmail = payload.email.toLowerCase().trim();
+
+    let customer = await Customer.findOne({ email: normalizedEmail });
+
+    if (!customer) {
+      // First time signing in with this Google account — create an account.
+      // No password is set since they'll always sign in via Google; phone
+      // is left blank and can be collected later if your app requires it
+      // for bookings.
+     customer = await Customer.create({
+    name: payload.name || normalizedEmail.split("@")[0],
+    email: normalizedEmail,
+    authProvider: "google",
+    phoneVerified: false,
+    emailVerified: true, // Google already verified this email
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Google sign-in successful",
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
+      },
+      token: generateToken(customer._id),
+    });
+  } catch (error) {
+    console.error("Google auth error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Google sign-in failed",
+      error: error.message,
+    });
+  }
+};
+
+/* =========================
+   UPDATE CUSTOMER PROFILE
+========================= */
+const updateCustomerProfile = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    const customer = req.customer; // set by protectCustomer middleware
+
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        message: "Name is required",
+      });
+    }
+
+    // Only check/update phone if they actually provided one — keeps
+    // Google-only accounts (which may have no phone) from being forced
+    // to set one just to save their name.
+    if (phone && phone.trim()) {
+      const existingPhone = await Customer.findOne({
+        phone: phone.trim(),
+        _id: { $ne: customer._id },
+      });
+
+      if (existingPhone) {
+        return res.status(400).json({
+          message: "This phone number is already in use by another account",
+        });
+      }
+
+      customer.phone = phone.trim();
+    }
+
+    customer.name = name.trim();
+    await customer.save();
+
+    res.status(200).json({
+      message: "Profile updated successfully",
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
+        authProvider: customer.authProvider,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to update profile",
+      error: error.message,
+    });
+  }
+};
+
+
 module.exports = {
   registerCustomer,
   loginCustomer,
@@ -447,4 +567,6 @@ module.exports = {
   getCustomerProfile,
   forgotPassword,
   resetPassword,
+  googleAuth,
+  updateCustomerProfile,
 };

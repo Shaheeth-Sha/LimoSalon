@@ -16,6 +16,10 @@ const {
 
 
 const { protectCustomer } = require("../middleware/authMiddleware");
+const {  googleAuth } = require("../controllers/customerController");
+
+const {  updateCustomerProfile } = require("../controllers/customerController");
+router.put("/profile", protectCustomer, updateCustomerProfile);
 
 
 router.post("/register", registerCustomer);
@@ -27,5 +31,7 @@ router.post("/send-registration-otp", sendRegistrationOtp);
 router.post("/verify-registration-otp", verifyRegistrationOtp);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
+router.post("/google-auth", googleAuth);
+
 
 module.exports = router;

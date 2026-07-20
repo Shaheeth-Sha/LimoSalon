@@ -18,14 +18,30 @@ const customerSchema = new mongoose.Schema(
 
     phone: {
       type: String,
-      required: true,
       unique: true,
+      sparse: true, // allows many docs with no phone (Google users) without unique-conflicting
       trim: true,
+      required: function () {
+        return this.authProvider !== "google";
+      },
     },
 
     password: {
       type: String,
-      required: true,
+      required: function () {
+        return this.authProvider !== "google";
+      },
+    },
+
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
+    },
+
+    phoneVerified: {
+      type: Boolean,
+      default: false,
     },
 
     emailVerified: {

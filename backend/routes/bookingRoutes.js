@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
+
 const {
   createBooking,
   createBookingHold,
@@ -8,6 +9,7 @@ const {
   getBookingAvailability,
   getMyBookings,
   cancelBooking,
+  rescheduleBooking,
 } = require("../controllers/bookingController");
 
 const {
@@ -53,5 +55,11 @@ router.patch(
   protectCustomer,
   cancelBooking
 );
+
+router.patch(
+     "/:bookingId/reschedule",
+     protectCustomer,
+     rescheduleBooking
+   );
 
 module.exports = router;

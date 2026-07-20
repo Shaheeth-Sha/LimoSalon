@@ -6,6 +6,7 @@ const bookingSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Customer",
       required: true,
+      index: true,
     },
 
     services: [
@@ -98,7 +99,7 @@ const bookingSchema = new mongoose.Schema(
 
     bookingType: {
       type: String,
-      enum: ["hair", "bridal"],
+      enum: ["hair", "bridal", "face", "body"],
       default: "hair",
     },
 
@@ -195,6 +196,26 @@ const bookingSchema = new mongoose.Schema(
       ],
       default: "Confirmed",
     },
+
+    // New: records what this booking's date/time was each time it
+    // gets rescheduled, for dispute resolution, support lookups, and
+    // any future reschedule-limit policy. Purely additive — only
+    // ever appended to by rescheduleBooking in the controller, never
+    // read or required anywhere else, so it can't break anything
+    // existing.
+    rescheduleHistory: {
+      type: [
+        {
+          previousDate: String,
+          previousTime: String,
+          rescheduledAt: {
+            type: Date,
+            default: Date.now,
+          },
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,
@@ -202,3 +223,14 @@ const bookingSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model("Booking", bookingSchema);
+
+
+
+
+
+
+
+
+
+
+
