@@ -3,9 +3,11 @@ import { Feather, AntDesign } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { signInWithGoogle } from '../../../utils/googleAuth';
 
 // Backend login API
 const API_URL = "http://10.0.2.2:5000/api/customers/login";
+const GOOGLE_AUTH_URL = "http://10.0.2.2:5000/api/customers/google-auth";
 // NOTE: 10.0.2.2 only resolves on the Android emulator. Swap in your
 // staging/production URL (or your machine's LAN IP) before demoing on
 // a physical device or iOS simulator.
@@ -39,6 +41,10 @@ export default function Login() {
   // Prevents duplicate submissions if the user taps Log In
   // multiple times while the request is still in flight.
   const [loading, setLoading] = useState(false);
+
+  // Separate loading flag for the Google button, since it's an
+  // independent action from the main email/password submission.
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   // Custom alert modal state
   const [alert, setAlert] = useState<AlertState>({
@@ -96,6 +102,41 @@ export default function Login() {
       showAlert("error", "Something Went Wrong", String(error?.message || error));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Google Sign-In — works for both existing and brand-new accounts.
+  // Backend creates the account on first sign-in, so there's no
+  // separate "register with Google" path needed.
+  const handleGoogleSignIn = async () => {
+    if (googleLoading) return;
+    setGoogleLoading(true);
+    try {
+      const idToken = await signInWithGoogle();
+
+      const res = await fetch(GOOGLE_AUTH_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showAlert("error", "Google Sign-In Failed", data.message || "Please try again");
+        return;
+      }
+
+      await AsyncStorage.setItem("customerToken", data.token);
+      await AsyncStorage.setItem("customerData", JSON.stringify(data.customer));
+
+      showAlert("success", "Welcome!", "Signed in with Google", () => {
+        router.replace('/(customer)/(tabs)/home');
+      });
+    } catch (error: any) {
+      showAlert("error", "Google Sign-In Failed", String(error?.message || error));
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -168,10 +209,13 @@ export default function Login() {
           <TouchableOpacity
             style={styles.googleBtn}
             activeOpacity={0.8}
-            onPress={() => showAlert("success", "Google Sign-In", "This feature is coming soon.")}
+            onPress={handleGoogleSignIn}
+            disabled={googleLoading}
           >
             <AntDesign name="google" size={18} color="#DB4437" style={styles.googleIcon} />
-            <Text style={styles.googleText}>Continue with Google</Text>
+            <Text style={styles.googleText}>
+              {googleLoading ? "Signing in..." : "Continue with Google"}
+            </Text>
           </TouchableOpacity>
 
         </View>

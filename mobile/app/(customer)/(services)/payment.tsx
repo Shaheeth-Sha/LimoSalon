@@ -1,6 +1,7 @@
 import React, {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -9,14 +10,15 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
+  Modal,
   ActivityIndicator,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 import {
   useLocalSearchParams,
   useRouter,
 } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const BOOKING_API =
@@ -92,6 +94,13 @@ const formatCountdown = (totalSeconds: number): string => {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
+// Fixed: previously this was used to collapse bookingType down to
+// only "bridal" or "hair" for the actual API call, which is why Face
+// and Body bookings were being saved as "hair" — the correct category
+// set by face.tsx/body.tsx/hair.tsx/bridal.tsx was being thrown away
+// right here. Now this is ONLY used for payment-policy decisions
+// (bridal gets a mandatory 20% advance vs. everyone else's 10%) —
+// display/business logic, not what gets saved to the database.
 const containsBridalService = (
   services: ServiceItem[],
   bookingType: string
@@ -125,6 +134,40 @@ const readJsonResponse = async (
 
 export default function Payment() {
   const router = useRouter();
+  const isFocused = useIsFocused();
+
+  const [alertState, setAlertState] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    buttonLabel?: string;
+    onOk?: () => void;
+  }>({ visible: false, title: "", message: "" });
+
+  const showAlert = (title: string, message: string, onOk?: () => void, buttonLabel?: string) => {
+    setAlertState({ visible: true, title, message, onOk, buttonLabel });
+  };
+
+  const closeAlert = () => {
+    const onOk = alertState.onOk;
+    setAlertState((prev) => ({ ...prev, visible: false }));
+    if (onOk) onOk();
+  };
+
+  // Sends the customer back to date/time selection, carrying forward
+  // the same services/hair length/booking type already chosen — only
+  // date, time, and staff need reselecting since the hold expired.
+  const goReselectDateTime = () => {
+    router.replace({
+      pathname: "/(customer)/(services)/dateTime",
+      params: {
+        selectedServices: selectedServicesText,
+        selectedLength: selectedLengthText,
+        totalAmount: totalAmountText,
+        bookingType: bookingTypeText,
+      },
+    });
+  };
 
   const {
     selectedServices,
@@ -206,8 +249,6 @@ export default function Payment() {
     [services, bookingTypeText]
   );
 
-  const normalizedBookingType = isBridal ? "bridal" : "hair";
-
   const advanceAvailable =
     isBridal || total >= NON_BRIDAL_ADVANCE_MINIMUM;
 
@@ -224,60 +265,88 @@ export default function Payment() {
   const payAtSalonAllowed =
     !isBridal && total < NON_BRIDAL_ADVANCE_MINIMUM;
 
-  const initialRemainingSeconds = useMemo(() => {
-    if (holdExpiresAtText) {
-      const expiryTime = new Date(holdExpiresAtText).getTime();
+  // Fixed: deadline-based countdown instead of a plain decrementing
+  // counter. The interval that ticks this down only runs while the
+  // screen is focused (see below — intentional, to save battery/CPU
+  // while the user is elsewhere). But a decrementing counter has no
+  // way to know how much real time passed during that gap, so it was
+  // resuming from the exact value it was frozen at — showing MORE
+  // time remaining than is actually true on the server.
+  //
+  // The fix: fix one absolute deadline, in this device's own clock,
+  // a single time. From then on remaining time is always
+  // `deadline - Date.now()`, recomputed fresh — so it doesn't matter
+  // how long the gap was or whether any ticks were missed, the very
+  // next read (including the one triggered immediately on refocus,
+  // below) is instantly correct.
+  const deadlineRef = useRef<number | null>(null);
 
-      if (!Number.isNaN(expiryTime)) {
-        return Math.max(
-          Math.ceil((expiryTime - Date.now()) / 1000),
-          0
-        );
-      }
-    }
-
+  if (deadlineRef.current === null) {
     const suppliedSeconds = Number(holdExpiresInSecondsText);
 
-    return Number.isFinite(suppliedSeconds) &&
-      suppliedSeconds > 0
-      ? Math.floor(suppliedSeconds)
-      : 0;
-  }, [holdExpiresAtText, holdExpiresInSecondsText]);
+    if (Number.isFinite(suppliedSeconds) && suppliedSeconds > 0) {
+      deadlineRef.current = Date.now() + suppliedSeconds * 1000;
+    } else if (holdExpiresAtText) {
+      const expiryTime = new Date(holdExpiresAtText).getTime();
+      deadlineRef.current = Number.isNaN(expiryTime)
+        ? Date.now()
+        : expiryTime;
+    } else {
+      deadlineRef.current = Date.now();
+    }
+  }
 
-  const [remainingSeconds, setRemainingSeconds] =
-    useState(initialRemainingSeconds);
+  const computeRemainingSeconds = () =>
+    Math.max(
+      0,
+      Math.ceil(((deadlineRef.current as number) - Date.now()) / 1000)
+    );
+
+  const [remainingSeconds, setRemainingSeconds] = useState(
+    computeRemainingSeconds
+  );
 
   const holdExpired =
     Boolean(holdIdText) && remainingSeconds <= 0;
 
+  // Recompute immediately whenever focus changes (not just on an
+  // interval tick) — this is what makes the displayed time instantly
+  // accurate the moment you come back, instead of showing a stale
+  // value for up to another second.
   useEffect(() => {
-    if (!holdIdText || remainingSeconds <= 0) return;
+    if (!holdIdText) return;
+    setRemainingSeconds(computeRemainingSeconds());
+  }, [isFocused, holdIdText]);
+
+  useEffect(() => {
+    // Only run the ticking interval while this screen is focused —
+    // no need to burn a timer in the background, since the
+    // deadline-based calculation above already guarantees the value
+    // is correct the instant focus returns.
+    if (!isFocused || !holdIdText) return;
 
     const timer = setInterval(() => {
-      setRemainingSeconds((current) =>
-        current > 0 ? current - 1 : 0
-      );
+      setRemainingSeconds(computeRemainingSeconds());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [holdIdText, remainingSeconds]);
+  }, [isFocused, holdIdText]);
 
   useEffect(() => {
-    if (!holdExpired) return;
+    // Only surface this while the user is actually on this screen,
+    // and use the app's branded modal instead of the native
+    // Alert.alert() (the plain system-styled popup seen in testing).
+    if (!holdExpired || !isFocused) return;
 
     setPaymentMethod("");
 
-    Alert.alert(
+    showAlert(
       "Reservation Expired",
       "Your temporary booking reservation has expired. Please select the staff and time again.",
-      [
-        {
-          text: "Select Again",
-          onPress: () => router.back(),
-        },
-      ]
+      goReselectDateTime,
+      "Select Time & Staff Again"
     );
-  }, [holdExpired, router]);
+  }, [holdExpired, isFocused]);
 
   const getToken = async () =>
     (await AsyncStorage.getItem("customerToken")) ||
@@ -285,33 +354,37 @@ export default function Payment() {
 
   const validateBookingDetails = (): boolean => {
     if (!holdIdText) {
-      Alert.alert(
+      showAlert(
         "Reservation Missing",
-        "The temporary slot reservation is missing. Please select the staff again."
+        "The temporary slot reservation is missing. Please select the staff and time again.",
+        goReselectDateTime,
+        "Select Time & Staff Again"
       );
       return false;
     }
 
     if (holdExpired) {
-      Alert.alert(
+      showAlert(
         "Reservation Expired",
-        "The temporary slot reservation has expired. Please select the staff again."
+        "The temporary slot reservation has expired. Please select the staff and time again.",
+        goReselectDateTime,
+        "Select Time & Staff Again"
       );
       return false;
     }
 
     if (services.length === 0) {
-      Alert.alert("Services Missing", "No services were selected.");
+      showAlert("Services Missing", "No services were selected.");
       return false;
     }
 
     if (!staff?._id && !staff?.staffId) {
-      Alert.alert("Staff Missing", "No staff member was selected.");
+      showAlert("Staff Missing", "No staff member was selected.");
       return false;
     }
 
     if (!selectedDateText || !selectedTimeText) {
-      Alert.alert(
+      showAlert(
         "Date or Time Missing",
         "Please select the booking date and time again."
       );
@@ -319,7 +392,7 @@ export default function Payment() {
     }
 
     if (total <= 0) {
-      Alert.alert("Amount Error", "The booking total is invalid.");
+      showAlert("Amount Error", "The booking total is invalid.");
       return false;
     }
 
@@ -330,7 +403,7 @@ export default function Payment() {
     if (loading || !validateBookingDetails()) return;
 
     if (!payAtSalonAllowed) {
-      Alert.alert(
+      showAlert(
         "Online Advance Required",
         isBridal
           ? "Bridal bookings require a 20% advance or full online payment."
@@ -345,8 +418,9 @@ export default function Payment() {
       const token = await getToken();
 
       if (!token) {
-        Alert.alert("Login Required", "Please login again.");
-        router.replace("/(customer)/(auth)/login");
+        showAlert("Login Required", "Please login again.", () =>
+          router.replace("/(customer)/(auth)/login")
+        );
         return;
       }
 
@@ -389,7 +463,11 @@ export default function Payment() {
           selectedTime: selectedTimeText,
           estimatedDuration: duration,
           totalAmount: total,
-          bookingType: normalizedBookingType,
+          // Fixed: was normalizedBookingType (collapsed to only
+          // "bridal"/"hair"). Now sends the real category that was
+          // set all the way back on the face/body/hair/bridal
+          // selection screen, unmodified.
+          bookingType: bookingTypeText,
           paymentOption: "salon",
           paymentMethod: "Pay at Salon",
         }),
@@ -398,7 +476,7 @@ export default function Payment() {
       const data = await readJsonResponse(response);
 
       if (!response.ok) {
-        Alert.alert(
+        showAlert(
           "Booking Error",
           data.message || "Booking creation failed."
         );
@@ -440,7 +518,7 @@ export default function Payment() {
     } catch (error) {
       console.error("Pay at salon booking error:", error);
 
-      Alert.alert(
+      showAlert(
         "Connection Error",
         error instanceof Error
           ? error.message
@@ -474,7 +552,10 @@ export default function Payment() {
         selectedTime: selectedTimeText,
         selectedStaff: selectedStaffText,
         totalAmount: String(total),
-        bookingType: normalizedBookingType,
+        // Fixed: was normalizedBookingType — same bug, forward the
+        // real category unmodified so cardPayment.tsx passes the
+        // correct value through to the final booking creation call.
+        bookingType: bookingTypeText,
         estimatedDuration: String(duration),
         holdId: holdIdText,
         holdExpiresAt: holdExpiresAtText,
@@ -548,7 +629,7 @@ export default function Payment() {
                   : "time-outline"
               }
               size={21}
-              color={holdExpired ? "#D62828" : "#FF2D55"}
+              color={holdExpired ? "#D62828" : "#FF2D75"}
             />
 
             <View style={styles.holdTextBox}>
@@ -668,6 +749,21 @@ export default function Payment() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal visible={alertState.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconCircle}>
+              <Feather name="alert-circle" size={28} color="#FF2D75" />
+            </View>
+            <Text style={styles.modalTitle}>{alertState.title}</Text>
+            <Text style={styles.modalMessage}>{alertState.message}</Text>
+            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+              <Text style={styles.modalButtonText}>{alertState.buttonLabel || "OK"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -761,7 +857,7 @@ const styles = StyleSheet.create({
     borderColor: "#C94E78",
   },
   paymentActive: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
     borderColor: "#B9003D",
   },
   disabledCard: {
@@ -816,7 +912,7 @@ const styles = StyleSheet.create({
   amountValue: {
     fontSize: 30,
     fontWeight: "800",
-    color: "#FF2D55",
+    color: "#FF2D75",
     marginTop: 5,
   },
   advanceSummary: {
@@ -840,9 +936,9 @@ const styles = StyleSheet.create({
   },
   payBtn: {
     marginTop: 35,
-    backgroundColor: "#FF0A5B",
+    backgroundColor: "#FF2D75",
     minHeight: 56,
-    borderRadius: 16,
+    borderRadius: 25,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -853,5 +949,57 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 19,
     fontWeight: "800",
+  },
+
+  /* ===== Custom Alert Modal ===== */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE1EC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
   },
 });

@@ -5,12 +5,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   ScrollView,
+  Modal,
 } from "react-native";
 
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 
 import {
   useLocalSearchParams,
@@ -24,12 +24,18 @@ import {
 } from "@stripe/stripe-react-native";
 
 
+
 const PAYMENT_API =
   "http://10.0.2.2:5000/api/payments";
 
 
 const BOOKING_API =
   "http://10.0.2.2:5000/api/bookings";
+
+// Mirrors the same threshold used on the payment method screen and
+// the backend — a non-bridal booking under this total has no advance
+// option at all, only Pay in Full (online) or Pay at Salon.
+const NON_BRIDAL_ADVANCE_MINIMUM = 10000;
 
 
 type PaymentOption =
@@ -118,11 +124,6 @@ export default function CardPayment() {
 
 
 
-  const [paymentOption, setPaymentOption] =
-    useState<PaymentOption>("advance");
-
-
-
   const services =
     safeJsonParse<any[]>(
       selectedServices,
@@ -145,6 +146,56 @@ export default function CardPayment() {
 
 
 
+  const isBridal =
+    String(
+      getParamValue(bookingType)
+    )
+      .toLowerCase()
+      .includes("bridal");
+
+  // Fixed: an advance was always selectable regardless of whether
+  // this booking actually qualifies for one. For a non-bridal total
+  // under LKR 10,000 that meant "10% Advance" showed LKR 0.00 and was
+  // still tappable, only failing once Pay was pressed. Now it's
+  // computed up front — same rule the payment method screen and
+  // backend already use — and the option is disabled and defaults to
+  // Full Payment whenever it doesn't apply.
+  const advanceAvailable =
+    isBridal || total >= NON_BRIDAL_ADVANCE_MINIMUM;
+
+  const [paymentOption, setPaymentOption] =
+    useState<PaymentOption>(
+      advanceAvailable ? "advance" : "full"
+    );
+
+  // Fixed: previously every message on this screen used the native
+  // Alert.alert() (plain system-styled popup) instead of the app's
+  // branded modal used everywhere else.
+  const [alertState, setAlertState] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    isSuccess?: boolean;
+    onOk?: () => void;
+  }>({ visible: false, title: "", message: "" });
+
+  const showAlert = (
+    title: string,
+    message: string,
+    onOk?: () => void,
+    isSuccess?: boolean
+  ) => {
+    setAlertState({ visible: true, title, message, onOk, isSuccess });
+  };
+
+  const closeAlert = () => {
+    const onOk = alertState.onOk;
+    setAlertState((prev) => ({ ...prev, visible: false }));
+    if (onOk) onOk();
+  };
+
+
+
   const duration =
     Number(
       getParamValue(
@@ -162,28 +213,26 @@ export default function CardPayment() {
 
 
 
-  const isBridal =
-    String(
-      getParamValue(bookingType)
-    )
-      .toLowerCase()
-      .includes("bridal");
-
-
+  const roundMoney = (value: number): number =>
+    Math.round((value + Number.EPSILON) * 100) / 100;
 
   const advanceAmount =
-    isBridal
-      ? total * 0.2
-      : total >= 10000
-        ? total * 0.1
-        : 0;
+    roundMoney(
+      isBridal
+        ? total * 0.2
+        : total >= 10000
+          ? total * 0.1
+          : 0
+    );
 
 
 
   const amountToPay =
-    paymentOption === "advance"
-      ? advanceAmount
-      : total;
+    roundMoney(
+      paymentOption === "advance"
+        ? advanceAmount
+        : total
+    );
 
 
 
@@ -223,7 +272,7 @@ export default function CardPayment() {
 
         if (!token) {
 
-          Alert.alert(
+          showAlert(
             "Login Required",
             "Please login again"
           );
@@ -236,7 +285,7 @@ export default function CardPayment() {
 
         if (!holdId) {
 
-          Alert.alert(
+          showAlert(
             "Missing Hold",
             "Booking slot reservation not found."
           );
@@ -305,7 +354,7 @@ export default function CardPayment() {
 
         if (!response.ok) {
 
-          Alert.alert(
+          showAlert(
             "Payment Error",
             data.message ||
             "Unable to create payment"
@@ -319,7 +368,7 @@ export default function CardPayment() {
 
         if (!data.clientSecret) {
 
-          Alert.alert(
+          showAlert(
             "Stripe Error",
             "Payment secret missing"
           );
@@ -353,7 +402,7 @@ export default function CardPayment() {
 
         if (init.error) {
 
-          Alert.alert(
+          showAlert(
             "Stripe Error",
             init.error.message
           );
@@ -371,7 +420,7 @@ export default function CardPayment() {
 
         if (payment.error) {
 
-          Alert.alert(
+          showAlert(
             "Payment Failed",
             payment.error.message
           );
@@ -383,7 +432,12 @@ export default function CardPayment() {
 
 
         // CREATE BOOKING AFTER SUCCESSFUL PAYMENT
-
+        // Fixed: previously nothing told the backend that Stripe had
+        // actually confirmed the charge, so every booking saved as
+        // Pending/unpaid regardless of payment option. Reaching this
+        // point means presentPaymentSheet() returned no error, i.e.
+        // Stripe genuinely confirmed the payment — so paymentConfirmed
+        // is sent as true here, and only here.
 
         const bookingResponse =
           await fetch(
@@ -524,6 +578,10 @@ export default function CardPayment() {
                 stripePaymentIntentId:
                   paymentIntentId,
 
+
+                paymentConfirmed:
+                  true,
+
               }),
 
             }
@@ -538,7 +596,7 @@ export default function CardPayment() {
 
         if (!bookingResponse.ok) {
 
-          Alert.alert(
+          showAlert(
             "Booking Error",
 
             bookingData.message ||
@@ -549,22 +607,18 @@ export default function CardPayment() {
 
         }
 
-        Alert.alert(
+        showAlert(
           "Payment Successful",
           "Your booking has been confirmed",
-          [
-            {
-              text: "OK",
+          () => {
 
-              onPress: () => {
+            router.replace({
 
-                router.replace({
-
-                  pathname:
-                    "/(customer)/(services)/bookingSuccess",
+              pathname:
+                "/(customer)/(services)/bookingSuccess",
 
 
-                  params: {
+              params: {
 
   bookingId:
     bookingData.booking?._id || "",
@@ -639,18 +693,13 @@ export default function CardPayment() {
 
 },
 
-                    
-
-
-                  },
-
-                );
-
               },
 
-            },
+            );
 
-          ]
+          },
+
+          true
 
         );
 
@@ -666,7 +715,7 @@ export default function CardPayment() {
         );
 
 
-        Alert.alert(
+        showAlert(
           "Error",
           "Cannot complete payment"
         );
@@ -728,7 +777,7 @@ export default function CardPayment() {
           <Ionicons
             name="card-outline"
             size={55}
-            color="#FF2D55"
+            color="#FF2D75"
           />
 
 
@@ -762,17 +811,25 @@ export default function CardPayment() {
 
 
           <TouchableOpacity
+            disabled={!advanceAvailable}
             style={[
               styles.option,
               paymentOption === "advance" &&
-              styles.selected
+              styles.selected,
+              !advanceAvailable &&
+              styles.optionDisabled,
             ]}
             onPress={() =>
               setPaymentOption("advance")
             }
           >
 
-            <Text>
+            <Text
+              style={
+                !advanceAvailable &&
+                styles.optionTextDisabled
+              }
+            >
               {
                 isBridal
                 ? "20% Bridal Advance"
@@ -781,8 +838,17 @@ export default function CardPayment() {
             </Text>
 
 
-            <Text>
-              {formatMoney(advanceAmount)}
+            <Text
+              style={
+                !advanceAvailable &&
+                styles.optionTextDisabled
+              }
+            >
+              {
+                advanceAvailable
+                ? formatMoney(advanceAmount)
+                : "Not available"
+              }
             </Text>
 
 
@@ -813,6 +879,13 @@ export default function CardPayment() {
 
 
           </TouchableOpacity>
+
+          {!advanceAvailable && (
+            <Text style={styles.advanceNote}>
+              Advance payment is only available for bridal bookings
+              or bookings of LKR 10,000 or more.
+            </Text>
+          )}
 
 
         </View>
@@ -848,6 +921,25 @@ export default function CardPayment() {
 
 
       </ScrollView>
+
+      <Modal visible={alertState.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={[styles.modalIconCircle, alertState.isSuccess && styles.modalIconCircleSuccess]}>
+              <Feather
+                name={alertState.isSuccess ? "check" : "alert-circle"}
+                size={28}
+                color={alertState.isSuccess ? "#2ECC71" : "#FF2D75"}
+              />
+            </View>
+            <Text style={styles.modalTitle}>{alertState.title}</Text>
+            <Text style={styles.modalMessage}>{alertState.message}</Text>
+            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
 
     </View>
@@ -945,13 +1037,30 @@ const styles = StyleSheet.create({
 
   selected: {
     backgroundColor: "#FFD6E3",
-    borderColor: "#FF2D55",
+    borderColor: "#FF2D75",
     borderWidth: 2,
+  },
+
+  optionDisabled: {
+    backgroundColor: "#F5F5F5",
+    borderColor: "#E5E5E5",
+  },
+
+  optionTextDisabled: {
+    color: "#999",
+  },
+
+  advanceNote: {
+    fontSize: 12,
+    color: "#888",
+    lineHeight: 17,
+    marginTop: -4,
+    marginBottom: 4,
   },
 
 
   button: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
     height: 55,
     borderRadius: 25,
     justifyContent: "center",
@@ -965,6 +1074,61 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 17,
     fontWeight: "800",
+  },
+
+  /* ===== Custom Alert Modal ===== */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE1EC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  modalIconCircleSuccess: {
+    backgroundColor: "#E8F8EF",
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
+    fontSize: 15,
   },
 
 });

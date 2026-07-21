@@ -1,5 +1,7 @@
 import { Stack } from "expo-router";
 import { StripeProvider } from "@stripe/stripe-react-native";
+import { useEffect } from "react";
+import { configureGoogleSignIn } from "../utils/googleAuth";
 
 const stripePublishableKey =
   process.env.EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
@@ -10,6 +12,10 @@ export default function RootLayout() {
       "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY is missing from mobile/.env"
     );
   }
+
+  useEffect(() => {
+    configureGoogleSignIn();
+  }, []);
 
   return (
     <StripeProvider publishableKey="pk_test_51TthLkK2fdvltzMthDyKYDpAyLiOazgJnQg87yrKdSJCiywIYb6LRaisMTOUSbXfAbSEpO1QXoN2iqkdH0sRwBQk00TPL5VKBv">

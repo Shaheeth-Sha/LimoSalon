@@ -504,6 +504,7 @@ const calculatePaymentDetails = ({
   bookingType,
   requestedPaymentOption,
   requestedPaymentMethod,
+  paymentConfirmed,
 }) => {
   const total = Number(totalAmount);
 
@@ -588,23 +589,36 @@ if (
   let paymentRequired = false;
   let paymentVerified = false;
 
+  // Fixed: previously "advance" and "full" always saved as
+  // Pending/unpaid/unverified regardless of what actually happened,
+  // because nothing ever told this function whether the online
+  // payment genuinely succeeded. cardPayment.tsx now sends
+  // paymentConfirmed: true only after Stripe's presentPaymentSheet()
+  // returns success — so this only marks a booking as paid when the
+  // client has verified a real successful charge, not automatically
+  // for every advance/full selection. "salon" always stays
+  // Pending/unpaid regardless, since that payment genuinely hasn't
+  // happened yet.
+  const isOnlinePaymentConfirmed =
+    paymentConfirmed === true && paymentOption !== "salon";
+
   if (paymentOption === "advance") {
     advancePayment = roundMoney(total * advanceRate);
-    amountPaid = advancePayment;
-    balancePayment = roundMoney(total - advancePayment);
-    paymentStatus = "Partially Paid";
+    amountPaid = isOnlinePaymentConfirmed ? advancePayment : 0;
+    balancePayment = roundMoney(total - amountPaid);
+    paymentStatus = isOnlinePaymentConfirmed ? "Partially Paid" : "Pending";
     paymentMethod = requestedPaymentMethod || "Credit/Debit Card";
     paymentRequired = true;
-    paymentVerified = false;
+    paymentVerified = isOnlinePaymentConfirmed;
   }
 
   if (paymentOption === "full") {
-    amountPaid = 0;
-    balancePayment = roundMoney(total);
-    paymentStatus = "Pending";
-    paymentMethod =  requestedPaymentMethod || "Credit/Debit Card";
+    amountPaid = isOnlinePaymentConfirmed ? total : 0;
+    balancePayment = isOnlinePaymentConfirmed ? 0 : roundMoney(total);
+    paymentStatus = isOnlinePaymentConfirmed ? "Paid" : "Pending";
+    paymentMethod = requestedPaymentMethod || "Credit/Debit Card";
     paymentRequired = true;
-    paymentVerified = false;
+    paymentVerified = isOnlinePaymentConfirmed;
   }
 
   if (paymentOption === "salon") {
@@ -985,6 +999,7 @@ const createBooking = async (req, res) => {
       paymentOption,
       paymentMethod,
       paymentIntentId,
+      paymentConfirmed,
     } = req.body;
 
     const customerId = getCustomerId(req);
@@ -1059,6 +1074,7 @@ const createBooking = async (req, res) => {
         bookingType,
         requestedPaymentOption: paymentOption,
         requestedPaymentMethod: paymentMethod,
+        paymentConfirmed,
       });
     } catch (error) {
       return res.status(400).json({

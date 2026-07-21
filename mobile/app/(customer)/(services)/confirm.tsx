@@ -1,14 +1,15 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
+  Modal,
 } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 
 type ServiceItem = {
   _id?: string;
@@ -121,6 +122,46 @@ const formatCountdown = (seconds: number): string => {
 
 export default function ConfirmBooking() {
   const router = useRouter();
+  const isFocused = useIsFocused();
+
+  const [alertState, setAlertState] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    buttonLabel?: string;
+    onConfirm?: () => void;
+  }>({ visible: false, title: "", message: "" });
+
+  const showAlert = (
+    title: string,
+    message: string,
+    buttonLabel?: string,
+    onConfirm?: () => void
+  ) => {
+    setAlertState({ visible: true, title, message, buttonLabel, onConfirm });
+  };
+
+  const closeAlert = () => {
+    const onConfirm = alertState.onConfirm;
+    setAlertState((prev) => ({ ...prev, visible: false }));
+    if (onConfirm) onConfirm();
+  };
+
+  // Sends the customer back to date/time selection, carrying forward
+  // the same services/hair length/booking type they already chose so
+  // they don't have to redo those steps — only date, time, and staff
+  // need reselecting since the hold on the old slot has expired.
+  const goReselectDateTime = () => {
+    router.replace({
+      pathname: "/(customer)/(services)/staff",
+      params: {
+        selectedServices: selectedServicesText,
+        selectedLength: selectedLengthText,
+        totalAmount: totalAmountText,
+        bookingType: bookingTypeText,
+      },
+    });
+  };
 
   const {
     selectedServices,
@@ -214,28 +255,49 @@ export default function ConfirmBooking() {
     return 0;
   }, [isBridal, total]);
 
-  const initialRemainingSeconds = useMemo(() => {
-    if (holdExpiresAtText) {
-      const expiryTime = new Date(holdExpiresAtText).getTime();
+  // Fixed: deadline-based countdown instead of a plain decrementing
+  // counter. The interval below only runs while the screen is
+  // focused (intentional — no need to burn a timer while the user is
+  // elsewhere). But a decrementing counter has no way to know how
+  // much real time passed during that gap, so it was resuming from
+  // whatever value it was frozen at when focus was lost — showing
+  // MORE time remaining than is actually true on the server after any
+  // real time away.
+  //
+  // The fix: fix one absolute deadline, in this device's own clock, a
+  // single time — using the accurate relative seconds the server
+  // supplied (holdExpiresInSeconds, always exactly 600s at hold
+  // creation, immune to clock skew), falling back to the absolute
+  // holdExpiresAt timestamp only if that's missing. From then on,
+  // remaining time is always `deadline - Date.now()`, recomputed
+  // fresh — so it doesn't matter how long the gap was or how many
+  // ticks were skipped, the very next read (including the one
+  // triggered immediately on refocus, below) is instantly correct.
+  const deadlineRef = useRef<number | null>(null);
 
-      if (!Number.isNaN(expiryTime)) {
-        return Math.max(
-          Math.ceil((expiryTime - Date.now()) / 1000),
-          0
-        );
-      }
-    }
-
+  if (deadlineRef.current === null) {
     const suppliedSeconds = Number(holdExpiresInSecondsText);
 
-    return Number.isFinite(suppliedSeconds) &&
-      suppliedSeconds > 0
-      ? Math.floor(suppliedSeconds)
-      : 0;
-  }, [holdExpiresAtText, holdExpiresInSecondsText]);
+    if (Number.isFinite(suppliedSeconds) && suppliedSeconds > 0) {
+      deadlineRef.current = Date.now() + suppliedSeconds * 1000;
+    } else if (holdExpiresAtText) {
+      const expiryTime = new Date(holdExpiresAtText).getTime();
+      deadlineRef.current = Number.isNaN(expiryTime)
+        ? Date.now()
+        : expiryTime;
+    } else {
+      deadlineRef.current = Date.now();
+    }
+  }
+
+  const computeRemainingSeconds = () =>
+    Math.max(
+      0,
+      Math.ceil(((deadlineRef.current as number) - Date.now()) / 1000)
+    );
 
   const [remainingSeconds, setRemainingSeconds] = useState(
-    initialRemainingSeconds
+    computeRemainingSeconds
   );
 
   const holdExpired =
@@ -244,56 +306,82 @@ export default function ConfirmBooking() {
   const isHairFlow = bookingTypeText.toLowerCase() === "hair";
   const totalSteps = isHairFlow ? 5 : 4;
 
+  // Recompute immediately whenever focus changes (not just on the
+  // next interval tick) — this is what makes the displayed time
+  // instantly accurate the moment you come back to this screen,
+  // instead of showing a stale value for up to another second.
   useEffect(() => {
-    if (!holdIdText || remainingSeconds <= 0) {
+    if (!holdIdText) {
+      return;
+    }
+
+    setRemainingSeconds(computeRemainingSeconds());
+  }, [isFocused, holdIdText]);
+
+  useEffect(() => {
+    // Fixed: previously this interval kept running even after the
+    // user navigated away from this screen entirely (e.g. after
+    // completing the booking and switching to the Bookings tab).
+    // Tab navigators don't destroy inactive tabs' screens, they just
+    // hide them, so the timer silently kept counting down in the
+    // background and eventually fired the expiry alert minutes
+    // later, on top of whatever screen the user was actually looking
+    // at. Now it only runs while this screen is genuinely focused —
+    // and since the value above is deadline-based rather than
+    // decremented, accuracy no longer depends on this interval firing
+    // on schedule; it's purely a display refresh while visible.
+    if (!isFocused || !holdIdText) {
       return;
     }
 
     const timer = setInterval(() => {
-      setRemainingSeconds((current) =>
-        current > 0 ? current - 1 : 0
-      );
+      setRemainingSeconds(computeRemainingSeconds());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [holdIdText, remainingSeconds]);
+  }, [isFocused, holdIdText]);
 
   useEffect(() => {
-    if (!holdExpired) {
+    // Fixed: same root cause as the timer above — only surface this
+    // alert while the user is actually on this screen. Also switched
+    // from the native Alert.alert() (the plain system-styled popup
+    // seen in testing) to the app's branded modal for consistency
+    // with every other popup in the app.
+    if (!holdExpired || !isFocused) {
       return;
     }
 
-    Alert.alert(
+    showAlert(
       "Reservation Expired",
       "Your temporary reservation has expired. Please select the staff and time again.",
-      [
-        {
-          text: "Select Again",
-          onPress: () => router.back(),
-        },
-      ]
+      "Select Time & Staff Again",
+      goReselectDateTime
     );
-  }, [holdExpired, router]);
+  }, [holdExpired, isFocused]);
 
   const handleContinue = () => {
     if (!holdIdText) {
-      Alert.alert(
+      showAlert(
         "Reservation Missing",
-        "The temporary reservation is missing. Please return and select the staff again."
+        "The temporary reservation is missing. Please select the staff and time again.",
+        "Select Time & Staff Again",
+        goReselectDateTime
       );
       return;
     }
 
     if (holdExpired) {
-      Alert.alert(
+      showAlert(
         "Reservation Expired",
-        "Your temporary reservation has expired. Please select the staff and time again."
+        "Your temporary reservation has expired. Please select the staff and time again.",
+        "Select Time & Staff Again",
+        goReselectDateTime
       );
       return;
     }
 
     if (!staff?._id && !staff?.staffId) {
-      Alert.alert(
+      showAlert(
         "Staff Missing",
         "Please return and select a staff member."
       );
@@ -509,6 +597,38 @@ export default function ConfirmBooking() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Custom branded alert modal — this was missing entirely
+          before; alertState was being set but nothing ever rendered
+          it, so no popup showed at all from this path. Combined with
+          the leftover Alert.alert() calls elsewhere in this file,
+          that's why the old native-style popup kept appearing
+          instead of this one. */}
+      <Modal
+        visible={alertState.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconCircle}>
+              <Feather name="alert-circle" size={28} color="#FF2D75" />
+            </View>
+            <Text style={styles.modalTitle}>{alertState.title}</Text>
+            <Text style={styles.modalMessage}>{alertState.message}</Text>
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.8}
+              onPress={closeAlert}
+            >
+              <Text style={styles.modalButtonText}>
+                {alertState.buttonLabel || "OK"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -572,7 +692,7 @@ const styles = StyleSheet.create({
   },
 
   stepDone: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
   },
 
   stepLine: {
@@ -695,7 +815,7 @@ const styles = StyleSheet.create({
   },
 
   continue: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
     padding: 14,
     borderRadius: 25,
     alignItems: "center",
@@ -708,6 +828,58 @@ const styles = StyleSheet.create({
   continueText: {
     color: "#fff",
     fontWeight: "700",
+    fontSize: 15,
+  },
+
+  /* ===== Custom Alert Modal ===== */
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 32,
+  },
+  modalCard: {
+    width: "100%",
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: "center",
+  },
+  modalIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#FFE1EC",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "bold",
+    color: "#111",
+    marginBottom: 6,
+    textAlign: "center",
+  },
+  modalMessage: {
+    fontSize: 14,
+    color: "#555",
+    textAlign: "center",
+    marginBottom: 22,
+    lineHeight: 20,
+  },
+  modalButton: {
+    width: "100%",
+    backgroundColor: "#FF2D75",
+    paddingVertical: 13,
+    borderRadius: 25,
+    alignItems: "center",
+  },
+  modalButtonText: {
+    color: "#fff",
+    fontWeight: "bold",
     fontSize: 15,
   },
 });

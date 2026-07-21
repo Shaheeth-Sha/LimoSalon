@@ -21,7 +21,8 @@ const CANCEL_BOOKING_API = (bookingId: string) =>
 type Booking = {
   _id: string;
   services: { name: string }[];
-  staff: { name: string };
+  staff: { name: string; staffId?: string };
+  estimatedDuration?: number;
   selectedDate: string;
   selectedTime: string;
   totalAmount: number;
@@ -29,6 +30,7 @@ type Booking = {
   effectiveStatus: string;
   paymentStatus: string;
   isPast: boolean;
+  rescheduleHistory?: { previousDate: string; previousTime: string; rescheduledAt: string }[];
 };
 
 type AlertState = {
@@ -59,7 +61,7 @@ export default function Bookings() {
 
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
 
-  // Fixed/new: feedback is tracked locally per booking id, since there's
+  // Feedback is tracked locally per booking id, since there's
   // no feedback backend yet. This is a demo-only simulation — it won't
   // survive an app restart. Map of bookingId -> feedback text.
   const [feedbackByBookingId, setFeedbackByBookingId] = useState<Record<string, string>>({});
@@ -258,14 +260,22 @@ export default function Bookings() {
           </Text>
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false}>
+        // FIX: ScrollView needs an explicit flex:1 so it actually claims
+        // the remaining vertical space in this layout, and a bottom
+        // padding on contentContainerStyle so the last card can scroll
+        // clear of the bottom tab bar instead of being hidden under it.
+        <ScrollView
+          style={styles.scrollArea}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
           {visibleBookings.map((booking) => {
             const serviceNames = (booking.services || [])
               .map((s) => s.name)
               .filter(Boolean)
               .join(", ");
 
-            // Fixed: use the computed effectiveStatus (Completed for
+            // Use the computed effectiveStatus (Completed for
             // past-due Confirmed bookings) instead of the raw status,
             // so the pill and feedback button reflect reality.
             const displayStatus = booking.effectiveStatus || booking.status;
@@ -287,6 +297,22 @@ export default function Bookings() {
                   <Text style={styles.sub}>With {booking.staff.name}</Text>
                 ) : null}
 
+                {/* Shows when this booking has been moved at
+                    least once, so the customer (and staff, if this
+                    view is reused there later) can tell at a glance
+                    that the current date/time isn't the original one. */}
+                {booking.rescheduleHistory && booking.rescheduleHistory.length > 0 && (
+                  <View style={styles.rescheduledBadge}>
+                    <Feather name="refresh-cw" size={11} color="#8A1230" />
+                    <Text style={styles.rescheduledBadgeText}>
+                      Rescheduled
+                      {booking.rescheduleHistory.length > 1
+                        ? ` ${booking.rescheduleHistory.length}x`
+                        : ""}
+                    </Text>
+                  </View>
+                )}
+
                 <Text style={styles.info}>📅 {formatDate(booking.selectedDate)}</Text>
                 <Text style={styles.info}>⏰ {booking.selectedTime}</Text>
 
@@ -302,7 +328,10 @@ export default function Bookings() {
                   </Text>
                   <TouchableOpacity
                     onPress={() =>
-                      showAlert("Booking Details", "Full details view is coming soon.")
+                      router.push({
+                        pathname: "/(customer)/(services)/bookingDetails",
+                        params: { booking: JSON.stringify(booking) },
+                      })
                     }
                   >
                     <Text style={styles.viewDetails}>View Details</Text>
@@ -326,7 +355,17 @@ export default function Bookings() {
                       style={styles.rescheduleBtn}
                       activeOpacity={0.8}
                       onPress={() =>
-                        showAlert("Reschedule", "This feature is coming soon.")
+                        router.push({
+                          pathname: "/(customer)/(services)/reschedule",
+                          params: {
+                            bookingId: booking._id,
+                            serviceName: serviceNames || "Service",
+                            date: formatDate(booking.selectedDate),
+                            time: booking.selectedTime,
+                            staffId: booking.staff?.staffId || "",
+                            estimatedDuration: String(booking.estimatedDuration || ""),
+                          },
+                        })
                       }
                     >
                       <Text style={styles.rescheduleText}>Reschedule</Text>
@@ -519,6 +558,19 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  // FIX: give the ScrollView itself a defined flex so it fills the
+  // remaining space below the header/toggle instead of collapsing to
+  // its content size (which can prevent scrolling in some RN versions).
+  scrollArea: {
+    flex: 1,
+  },
+
+  // FIX: extra bottom padding so the last card in the list can be
+  // scrolled up clear of the bottom tab bar instead of sitting behind it.
+  scrollContent: {
+    paddingBottom: 100,
+  },
+
   card: {
     backgroundColor: "#d86a86",
     borderRadius: 18,
@@ -541,6 +593,24 @@ const styles = StyleSheet.create({
   sub: {
     fontSize: 12,
     marginBottom: 6,
+  },
+
+  rescheduledBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#F5C5D4",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+    marginBottom: 6,
+  },
+
+  rescheduledBadgeText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#8A1230",
   },
 
   info: {
@@ -608,7 +678,7 @@ const styles = StyleSheet.create({
   feedbackBtn: {
     backgroundColor: "#FF2D75",
     paddingVertical: 10,
-    borderRadius: 25,
+    borderRadius: 8,
     alignItems: "center",
     marginTop: 10,
   },
@@ -622,7 +692,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     paddingVertical: 8,
     paddingHorizontal: 20,
-    borderRadius: 25,
+    borderRadius: 8,
   },
 
   cancelText: {
@@ -633,7 +703,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#FF2D75",
     paddingVertical: 8,
     paddingHorizontal: 20,
-    borderRadius: 25,
+    borderRadius: 8,
   },
 
   rescheduleText: {

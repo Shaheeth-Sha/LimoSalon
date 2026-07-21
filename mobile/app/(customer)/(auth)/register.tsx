@@ -10,9 +10,11 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
-import { Ionicons, Feather } from "@expo/vector-icons";
+import { Ionicons, Feather, AntDesign } from "@expo/vector-icons";
 import { useState } from "react";
 import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { signInWithGoogle } from "../../../utils/googleAuth";
 
 // =====================================================
 // Pending registration holder — uses React Native's global object
@@ -63,6 +65,10 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  // Separate loading flag for the Google button, since it's an
+  // independent action from the main form submission.
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const [errors, setErrors] = useState<ErrorState>({
     firstName: false,
@@ -174,7 +180,10 @@ export default function Register() {
     setErrors(newErrors);
 
     if (newErrors.firstName || newErrors.lastName) {
-      showAlert("Missing Information", "Please enter your first name and last name.");
+      showAlert(
+        "Missing Information",
+        "Please enter your first name and last name."
+      );
       return false;
     }
 
@@ -239,6 +248,42 @@ export default function Register() {
       // The screen can now perform email OTP verification.
       pathname: "/(customer)/(auth)/PhoneVerification",
     });
+  };
+
+  // Google accounts skip the email-OTP verification step entirely —
+  // Google has already verified the email, so this goes straight from
+  // sign-in to a real, usable account and into the app.
+  const handleGoogleSignIn = async () => {
+    if (googleLoading) return;
+    setGoogleLoading(true);
+    try {
+      const idToken = await signInWithGoogle();
+
+      const res = await fetch(
+        "http://10.0.2.2:5000/api/customers/google-auth",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ idToken }),
+        }
+      );
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showAlert("Google Sign-In Failed", data.message || "Please try again");
+        return;
+      }
+
+      await AsyncStorage.setItem("customerToken", data.token);
+      await AsyncStorage.setItem("customerData", JSON.stringify(data.customer));
+
+      router.replace("/(customer)/(tabs)/home");
+    } catch (error: any) {
+      showAlert("Google Sign-In Failed", String(error?.message || error));
+    } finally {
+      setGoogleLoading(false);
+    }
   };
 
   return (
@@ -563,6 +608,30 @@ export default function Register() {
           <Text style={styles.buttonText}>Create Account</Text>
         </TouchableOpacity>
 
+        <View style={styles.dividerRow}>
+          <View style={styles.line} />
+          <Text style={styles.orText}>or continue with</Text>
+          <View style={styles.line} />
+        </View>
+
+        <TouchableOpacity
+          style={styles.googleBtn}
+          activeOpacity={0.8}
+          onPress={handleGoogleSignIn}
+          disabled={googleLoading}
+        >
+          <AntDesign
+            name="google"
+            size={18}
+            color="#DB4437"
+            style={styles.googleIcon}
+          />
+
+          <Text style={styles.googleText}>
+            {googleLoading ? "Signing in..." : "Continue with Google"}
+          </Text>
+        </TouchableOpacity>
+
         <Text style={styles.loginText}>
           Already have an account?{" "}
           <Text
@@ -577,7 +646,12 @@ export default function Register() {
       </ScrollView>
 
       {/* Custom branded alert modal — replaces Alert.alert() */}
-      <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
+      <Modal
+        visible={alert.visible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAlert}
+      >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
 
@@ -588,7 +662,11 @@ export default function Register() {
             <Text style={styles.modalTitle}>{alert.title}</Text>
             <Text style={styles.modalMessage}>{alert.message}</Text>
 
-            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.8}
+              onPress={closeAlert}
+            >
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
 
@@ -709,6 +787,46 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "700",
+  },
+
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 20,
+    marginBottom: 16,
+  },
+
+  line: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#ddd",
+  },
+
+  orText: {
+    marginHorizontal: 10,
+    fontSize: 12,
+    color: "#777",
+  },
+
+  googleBtn: {
+    width: "100%",
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: "#ddd",
+    paddingVertical: 15,
+    borderRadius: 25,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  googleIcon: {
+    marginRight: 10,
+  },
+
+  googleText: {
+    fontWeight: "600",
+    fontSize: 14,
+    color: "#111",
   },
 
   loginText: {
