@@ -1,7 +1,7 @@
 const bcrypt = require("bcryptjs");
 const Stripe = require("stripe");
 
-const PaymentOtp = require("../models/paymentOtp");
+const PaymentOtp = require("../models/PaymentOtp");
 const Payment = require("../models/Payment");
 const Customer = require("../models/Customer");
 const sendEmail = require("../utils/sendEmail");
