@@ -9,12 +9,12 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useRouter, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const PROFILE_API = "http://10.0.2.2:5000/api/customers/profile";
-const MY_BOOKINGS_API = "http://10.0.2.2:5000/api/bookings/my-bookings";
+const PROFILE_API = "https://limosalon.onrender.com/api/customers/profile";
+const MY_BOOKINGS_API = "https://limosalon.onrender.com/api/bookings/my-bookings";
 
 type AlertState = {
   visible: boolean;
@@ -110,11 +110,6 @@ export default function Home() {
 
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
 
-  useEffect(() => {
-    loadProfile();
-    loadNextBooking();
-  }, []);
-
   const loadProfile = async () => {
     try {
       const token = await AsyncStorage.getItem("customerToken");
@@ -139,7 +134,7 @@ export default function Home() {
     }
   };
 
-  const loadNextBooking = async () => {
+  const loadNextBooking = useCallback(async () => {
     try {
       setBookingLoading(true);
       const token = await AsyncStorage.getItem("customerToken");
@@ -172,7 +167,24 @@ export default function Home() {
     } finally {
       setBookingLoading(false);
     }
-  };
+  }, []);
+
+  // Fixed: this used to run inside a plain useEffect(() => {...}, []),
+  // so it only ever fetched once when Home first mounted. Since Home
+  // is a tab, navigating to Bookings, cancelling, then tapping back to
+  // the Home tab does NOT remount it — the screen just regains focus —
+  // so the old booking stayed cached in state until a full app reload.
+  // useFocusEffect re-runs this every time the Home tab is focused,
+  // including right after a cancellation on the Bookings tab.
+  useFocusEffect(
+    useCallback(() => {
+      loadNextBooking();
+    }, [loadNextBooking])
+  );
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
 
   const runSearch = () => {
     if (!searchQuery.trim()) return;

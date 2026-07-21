@@ -22,7 +22,7 @@ declare global {
     | undefined;
 }
 
-const API_URL = "http://10.0.2.2:5000/api/customers";
+const API_URL = "https://limosalon.onrender.com/api/customers";
 
 type AlertState = {
   visible: boolean;

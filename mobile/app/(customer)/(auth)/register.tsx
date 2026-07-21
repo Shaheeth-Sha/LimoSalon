@@ -260,7 +260,7 @@ export default function Register() {
       const idToken = await signInWithGoogle();
 
       const res = await fetch(
-        "http://10.0.2.2:5000/api/customers/google-auth",
+        "https://limosalon.onrender.com/api/customers/google-auth",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

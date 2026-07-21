@@ -18,7 +18,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
 
-const BASE_URL = "http://10.0.2.2:5000";
+const BASE_URL = "https://limosalon.onrender.com";
 
 const SERVICES_API =
   `${BASE_URL}/api/services?category=Bridal`;

@@ -6,20 +6,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signInWithGoogle } from '../../../utils/googleAuth';
 
 // Backend login API
-const API_URL = "http://10.0.2.2:5000/api/customers/login";
-const GOOGLE_AUTH_URL = "http://10.0.2.2:5000/api/customers/google-auth";
+const API_URL = "https://limosalon.onrender.com/api/customers/login";
+const GOOGLE_AUTH_URL = "https://limosalon.onrender.com/api/customers/google-auth";
 // NOTE: 10.0.2.2 only resolves on the Android emulator. Swap in your
 // staging/production URL (or your machine's LAN IP) before demoing on
-// a physical device or iOS simulator.
 
-// =====================================================
+
+
 // Custom in-app alert modal
 // Replaces the default OS Alert.alert() popup (which cannot be
 // restyled and looks like a generic system dialog) with a modal
 // that matches the app's own branding — rounded card, brand color
 // icon circle, pill button. Behavior is the same: shows a title,
 // a message, and an OK button that can run a callback on dismiss.
-// =====================================================
+
 type AlertType = "success" | "error";
 
 interface AlertState {

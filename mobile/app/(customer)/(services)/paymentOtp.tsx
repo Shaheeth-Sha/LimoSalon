@@ -17,10 +17,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
 const PAYMENT_API =
-  "http://10.0.2.2:5000/api/payments";
+  "https://limosalon.onrender.com/api/payments";
 
 const BOOKING_API =
-  "http://10.0.2.2:5000/api/bookings";
+  "https://limosalon.onrender.com/api/bookings";
 
 type PaymentOption = "advance" | "full";
 

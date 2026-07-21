@@ -22,7 +22,7 @@ import {
   useRouter,
 } from "expo-router";
 
-const BASE_URL = "http://10.0.2.2:5000";
+const BASE_URL = "https://limosalon.onrender.com";
 
 const STAFF_API = `${BASE_URL}/api/staff?category=Hair`;
 const AVAILABILITY_API = `${BASE_URL}/api/bookings/availability`;

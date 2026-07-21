@@ -1,5 +1,6 @@
 {
   "expo": {
+    "privacy": "public",
     "name": "mobile",
     "slug": "mobile",
     "version": "1.0.0",
@@ -23,8 +24,7 @@
       "package": "com.limosalon.mobile"
     },
     "web": {
-      "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "bundler": "metro"
     },
     "plugins": [
       "expo-router",
@@ -60,6 +60,12 @@
       "eas": {
         "projectId": "ad3a17ae-39fb-451a-86d8-3c124dedfbc4"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/ad3a17ae-39fb-451a-86d8-3c124dedfbc4"
     }
   }
 }

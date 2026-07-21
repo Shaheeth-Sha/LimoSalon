@@ -6,6 +6,14 @@ const transporter = nodemailer.createTransport({
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  // Fixed: Gmail's SMTP server resolves to both an IPv4 and IPv6
+  // address. On Render (and several other cloud hosts), outbound
+  // IPv6 routing is broken/unreachable, so Node's socket connection
+  // attempt over IPv6 just hangs until it times out (ETIMEDOUT,
+  // ESOCKET) — even though the credentials and everything else is
+  // completely correct. Forcing IPv4 (family: 4) skips the broken
+  // IPv6 path entirely and connects over the working IPv4 route.
+  family: 4,
 });
 
 const sendEmail = async ({ to, subject, html }) => {

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "rea
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 
-const HAIR_LENGTH_API = "http://10.0.2.2:5000/api/hair-lengths";
+const HAIR_LENGTH_API = "https://limosalon.onrender.com/api/hair-lengths";
 
 type HairLengthItem = {
   _id: string;

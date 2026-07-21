@@ -17,7 +17,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // self-contained version rather than branching the original screen
 // with conditional logic everywhere.
 
-const BASE_URL = "http://10.0.2.2:5000";
+const BASE_URL = "https://limosalon.onrender.com";
 const HOLD_API = `${BASE_URL}/api/bookings/hold`;
 
 type DateItem = {

@@ -22,7 +22,7 @@ import { useIsFocused } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const BOOKING_API =
-  "http://10.0.2.2:5000/api/bookings";
+  "https://limosalon.onrender.com/api/bookings";
 
 const NON_BRIDAL_ADVANCE_MINIMUM = 10000;
 const BRIDAL_ADVANCE_RATE = 0.2;
