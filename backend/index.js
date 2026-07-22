@@ -1,6 +1,11 @@
 
 
 
+
+
+const dns = require("dns");
+dns.setDefaultResultOrder("ipv4first"); // forces IPv4, avoids broken IPv6 routes
+
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
