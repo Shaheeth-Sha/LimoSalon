@@ -20,9 +20,11 @@ declare global {
     | { name: string; email: string; phone: string; password: string }
     | null
     | undefined;
+  // eslint-disable-next-line no-var
+  var __registrationFieldError: "phone" | "email" | null | undefined;
 }
 
-const API_URL = "https://limosalon.onrender.com/api/customers";
+const API_URL = "http://10.0.2.2:5000/api/customers";
 
 type AlertState = {
   visible: boolean;
@@ -148,9 +150,23 @@ export default function VerifyOtp() {
         // "Resend code" for a fresh one.
         setOtp(["", "", "", "", "", ""]);
         inputs.current[0]?.focus();
+
+        // Flag which field the backend rejected, so the Register
+        // screen can pre-fill the form and highlight that field in
+        // red once the user is sent back to it.
+        const message = registerData.message || "Registration failed";
+
+        if (/phone/i.test(message)) {
+          global.__registrationFieldError = "phone";
+        } else if (/email/i.test(message)) {
+          global.__registrationFieldError = "email";
+        } else {
+          global.__registrationFieldError = null;
+        }
+
         showAlert(
           "Registration Failed",
-          `${registerData.message || "Registration failed"}\n\nYour code has already been used — tap "Resend code" to get a new one if you try again.`
+          `${message}\n\nYour code has already been used — tap "Resend code" to get a new one if you try again.`
         );
         return;
       }
@@ -304,7 +320,11 @@ export default function VerifyOtp() {
         </View>
       )}
 
-      {/* Custom branded alert modal for errors/info — replaces Alert.alert() */}
+      {/* Custom branded alert modal for errors/info — replaces Alert.alert().
+          OK button behaves differently depending on the alert: if this
+          alert was for a rejected registration field (phone/email already
+          taken), tapping OK sends the user back to Register with that
+          field flagged, instead of just dismissing the dialog in place. */}
       <Modal visible={alert.visible} transparent animationType="fade" onRequestClose={closeAlert}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -316,7 +336,17 @@ export default function VerifyOtp() {
             <Text style={styles.modalTitle}>{alert.title}</Text>
             <Text style={styles.modalMessage}>{alert.message}</Text>
 
-            <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
+            <TouchableOpacity
+              style={styles.modalButton}
+              activeOpacity={0.8}
+              onPress={() => {
+                closeAlert();
+
+                if (global.__registrationFieldError) {
+                  router.replace("/(customer)/(auth)/register");
+                }
+              }}
+            >
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
 

@@ -26,11 +26,11 @@ import {
 
 
 const PAYMENT_API =
-  "https://limosalon.onrender.com/api/payments";
+  "http://10.0.2.2:5000/api/payments";
 
 
 const BOOKING_API =
-  "https://limosalon.onrender.com/api/bookings";
+  "http://10.0.2.2:5000/api/bookings";
 
 // Mirrors the same threshold used on the payment method screen and
 // the backend — a non-bridal booking under this total has no advance

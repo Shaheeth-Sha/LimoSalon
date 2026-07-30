@@ -11,7 +11,7 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons, Feather, AntDesign } from "@expo/vector-icons";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { signInWithGoogle } from "../../../utils/googleAuth";
@@ -30,6 +30,8 @@ declare global {
     | { name: string; email: string; phone: string; password: string }
     | null
     | undefined;
+  // eslint-disable-next-line no-var
+  var __registrationFieldError: "phone" | "email" | null | undefined;
 }
 
 type ErrorState = {
@@ -90,6 +92,32 @@ export default function Register() {
   };
 
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
+
+  // =====================================================
+  // On mount: if we were sent back here after a failed
+  // registration (e.g. "Phone number already registered"),
+  // restore the previously entered fields from the in-memory
+  // holder and highlight whichever field the backend rejected.
+  // =====================================================
+  useEffect(() => {
+    const pending = global.__pendingRegistration;
+
+    if (pending) {
+      const [first, ...rest] = pending.name.split(" ");
+      setFirstName(first || "");
+      setLastName(rest.join(" ") || "");
+      setEmail(pending.email);
+      setPhone(formatPhone(pending.phone));
+    }
+
+    if (global.__registrationFieldError === "phone") {
+      setErrors((prev) => ({ ...prev, phone: true }));
+      global.__registrationFieldError = null;
+    } else if (global.__registrationFieldError === "email") {
+      setErrors((prev) => ({ ...prev, email: true }));
+      global.__registrationFieldError = null;
+    }
+  }, []);
 
   const emailRegex = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/;
 
@@ -260,7 +288,7 @@ export default function Register() {
       const idToken = await signInWithGoogle();
 
       const res = await fetch(
-        "https://limosalon.onrender.com/api/customers/google-auth",
+        "http://10.0.2.2:5000/api/customers/google-auth",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -439,6 +467,13 @@ export default function Register() {
             }}
           />
         </View>
+
+        {errors.phone && (
+          <Text style={styles.fieldErrorText}>
+            This phone number is already registered. Please use a different
+            number or login instead.
+          </Text>
+        )}
 
         <View
           style={[
@@ -740,6 +775,14 @@ const styles = StyleSheet.create({
 
   errorBorder: {
     borderColor: "#D62828",
+  },
+
+  fieldErrorText: {
+    fontSize: 12,
+    color: "#D62828",
+    marginTop: -8,
+    marginBottom: 14,
+    marginLeft: 10,
   },
 
   input: {

@@ -14,6 +14,18 @@ export const configureGoogleSignIn = () => {
 export const signInWithGoogle = async (): Promise<string> => {
   try {
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+
+    // Fixed: without this, Google silently reuses the last signed-in
+    // account and never shows the account picker — even when multiple
+    // Google accounts exist on the device. Signing out first clears
+    // that cached session so the picker always appears, letting the
+    // user choose which account to use each time.
+    try {
+      await GoogleSignin.signOut();
+    } catch {
+      // No previous session to sign out of — safe to ignore.
+    }
+
     const response = await GoogleSignin.signIn();
 
     // v13+ of this library wraps the payload in `data`

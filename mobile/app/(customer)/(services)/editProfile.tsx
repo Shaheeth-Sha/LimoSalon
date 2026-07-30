@@ -12,7 +12,7 @@ import { Ionicons, Feather } from "@expo/vector-icons";
 import { useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const API_URL = "https://limosalon.onrender.com/api/customers/profile";
+const API_URL = "http://10.0.2.2:5000/api/customers/profile";
 
 type AlertState = {
   visible: boolean;

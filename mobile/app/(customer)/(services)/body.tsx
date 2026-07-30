@@ -23,7 +23,7 @@ import {
 
 
 // Backend API
-const BASE_URL = "https://limosalon.onrender.com";
+const BASE_URL = "http://10.0.2.2:5000";
 
 const SERVICE_API =
   `${BASE_URL}/api/services?category=Body`;

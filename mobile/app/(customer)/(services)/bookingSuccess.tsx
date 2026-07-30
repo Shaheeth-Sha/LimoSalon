@@ -1,13 +1,17 @@
-import React from "react";
+import React, { useEffect, useLayoutEffect, useRef } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  Animated,
+  Easing,
+  BackHandler,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import ConfettiPour from "./ConfettiPour";
 
 const getParamValue = (
   value: string | string[] | undefined
@@ -44,6 +48,38 @@ const formatMoney = (amount: number) =>
 
 export default function BookingSuccess() {
   const router = useRouter();
+  const navigation = useNavigation();
+
+  // New: this screen represents a completed transaction — there's
+  // nothing sensible to go "back" to. Going back would return the
+  // user into the payment/confirm flow for a booking that's already
+  // paid and saved, risking confusion or an accidental duplicate
+  // attempt. This removes every path back:
+  //   1. The stack header's back arrow, if one would otherwise show.
+  //   2. Android's hardware back button / gesture-nav back action.
+  // "Return Home" remains the only way to leave this screen.
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerBackVisible: false,
+      gestureEnabled: false,
+      headerLeft: () => null,
+    });
+  }, [navigation]);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener(
+      "hardwareBackPress",
+      () => {
+        // Returning true marks the back press as handled, so the
+        // default "go back" behavior never runs. Route them to the
+        // same place the button already sends them.
+        router.replace("/(customer)/(tabs)/home");
+        return true;
+      }
+    );
+
+    return () => subscription.remove();
+  }, [router]);
 
   const {
     bookingId,
@@ -152,19 +188,82 @@ export default function BookingSuccess() {
           ? "#B42318"
           : "#555555";
 
+  // New: entrance animation. The checkmark circle scales in with a
+  // slight overshoot (spring) and its checkmark glyph fades in right
+  // after, followed by the details card sliding up and fading in.
+  // Uses React Native's built-in Animated API only — no extra
+  // dependency, no impact on bundle size. Purely visual: nothing here
+  // blocks interaction, and the "Return Home" button is usable the
+  // entire time.
+  const iconScale = useRef(new Animated.Value(0)).current;
+  const checkOpacity = useRef(new Animated.Value(0)).current;
+  const cardOpacity = useRef(new Animated.Value(0)).current;
+  const cardTranslateY = useRef(new Animated.Value(18)).current;
+  const buttonOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.spring(iconScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 80,
+        useNativeDriver: true,
+      }),
+      Animated.timing(checkOpacity, {
+        toValue: 1,
+        duration: 180,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }),
+      Animated.parallel([
+        Animated.timing(cardOpacity, {
+          toValue: 1,
+          duration: 320,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(cardTranslateY, {
+          toValue: 0,
+          duration: 320,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.timing(buttonOpacity, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
+
   return (
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.container}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.successIcon}>
-        <Ionicons
-          name="checkmark"
-          size={72}
-          color="#000"
-        />
-      </View>
+      {/* New: pink particle-pour effect, purely decorative. Sits in
+          an absolutely-positioned, pointerEvents="none" overlay so it
+          never blocks taps on anything beneath it (the checkmark,
+          the card, or the Return Home button). */}
+      <ConfettiPour />
+
+      <Animated.View
+        style={[
+          styles.successIcon,
+          { transform: [{ scale: iconScale }] },
+        ]}
+      >
+        <Animated.View style={{ opacity: checkOpacity }}>
+          <Ionicons
+            name="checkmark"
+            size={72}
+            color="#000"
+          />
+        </Animated.View>
+      </Animated.View>
 
       <Text style={styles.title}>
         Booking Confirmed
@@ -178,7 +277,17 @@ export default function BookingSuccess() {
         Thank you for choosing LimoSalon.
       </Text>
 
-      <View style={styles.card}>
+      <Animated.View
+        style={[
+          styles.card,
+          {
+            opacity: cardOpacity,
+            transform: [
+              { translateY: cardTranslateY },
+            ],
+          },
+        ]}
+      >
         <DetailRow
           label="Booking ID"
           value={
@@ -277,27 +386,34 @@ export default function BookingSuccess() {
             )}
           />
         ) : null}
-      </View>
+      </Animated.View>
 
-      <TouchableOpacity
-        style={styles.homeButton}
-        onPress={() =>
-          router.replace(
-            "/(customer)/(tabs)/home"
-          )
-        }
-        activeOpacity={0.85}
+      <Animated.View
+        style={{
+          width: "100%",
+          opacity: buttonOpacity,
+        }}
       >
-        <Ionicons
-          name="home-outline"
-          size={20}
-          color="#FFFFFF"
-        />
+        <TouchableOpacity
+          style={styles.homeButton}
+          onPress={() =>
+            router.replace(
+              "/(customer)/(tabs)/home"
+            )
+          }
+          activeOpacity={0.85}
+        >
+          <Ionicons
+            name="home-outline"
+            size={20}
+            color="#FFFFFF"
+          />
 
-        <Text style={styles.homeText}>
-          Return Home
-        </Text>
-      </TouchableOpacity>
+          <Text style={styles.homeText}>
+            Return Home
+          </Text>
+        </TouchableOpacity>
+      </Animated.View>
     </ScrollView>
   );
 }

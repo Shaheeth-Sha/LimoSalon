@@ -1,8 +1,3 @@
-
-
-
-
-
 const dns = require("dns");
 dns.setDefaultResultOrder("ipv4first"); // forces IPv4, avoids broken IPv6 routes
 
@@ -19,6 +14,7 @@ const staffRoutes = require("./routes/staffRoutes");
 const bookingRoutes = require("./routes/bookingRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const stripeRoutes = require("./routes/stripeRoutes");
+const timeSlotRoutes = require("./routes/timeSlotRoutes");
 
 const app = express();
 
@@ -50,6 +46,7 @@ app.use("/api/staff", staffRoutes);
 app.use("/api/bookings", bookingRoutes)
 app.use("/api/payments", paymentRoutes);
 app.use("/api/stripe", stripeRoutes);
+app.use("/api/time-slots", timeSlotRoutes);
 
 const PORT = process.env.PORT || 5000;
 

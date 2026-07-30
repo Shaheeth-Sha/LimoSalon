@@ -13,8 +13,8 @@ import { useRouter, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const PROFILE_API = "https://limosalon.onrender.com/api/customers/profile";
-const MY_BOOKINGS_API = "https://limosalon.onrender.com/api/bookings/my-bookings";
+const PROFILE_API = "http://10.0.2.2:5000/api/customers/profile";
+const MY_BOOKINGS_API = "http://10.0.2.2:5000/api/bookings/my-bookings";
 
 type AlertState = {
   visible: boolean;

@@ -1464,6 +1464,25 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
+    // New: block "rescheduling" to the exact same date/time the
+    // booking already has. The booking being moved is deliberately
+    // excluded from the conflict search below (so it doesn't block
+    // against its own current slot) — but that means picking the
+    // identical slot again would otherwise find zero conflicts and
+    // silently "succeed", adding a pointless reschedule history entry
+    // and mislabeling an unchanged booking as "Rescheduled".
+    if (
+      hold.selectedDate === booking.selectedDate &&
+      normalizeBookingTime(hold.selectedTime) ===
+        normalizeBookingTime(booking.selectedTime)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This is already your current appointment time. Please choose a different date or time.",
+      });
+    }
+
     const confirmedConflict = await findConfirmedBookingConflict({
       staffId: booking.staff.staffId,
       selectedDate: hold.selectedDate,

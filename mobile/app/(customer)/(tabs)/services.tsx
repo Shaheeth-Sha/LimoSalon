@@ -15,7 +15,7 @@ import { Ionicons, Feather } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = "https://limosalon.onrender.com";
+const BASE_URL = "http://10.0.2.2:5000";
 
 const CATEGORY_API = `${BASE_URL}/api/services`;
 const PROFILE_API = `${BASE_URL}/api/customers/profile`;

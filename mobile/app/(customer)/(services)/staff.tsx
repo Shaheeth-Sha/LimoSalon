@@ -22,9 +22,15 @@ import {
   useRouter,
 } from "expo-router";
 
-const BASE_URL = "https://limosalon.onrender.com";
+const BASE_URL = "http://10.0.2.2:5000";
 
-const STAFF_API = `${BASE_URL}/api/staff?category=Hair`;
+// Fixed: this used to be hardcoded to `?category=Hair`, so every
+// booking flow — regardless of the actual service category selected
+// (Body, Bridal, Face) — only ever fetched Hair-category staff. Now
+// this is just the base endpoint; the category query param is built
+// dynamically inside loadStaff() from the bookingType this screen
+// actually received.
+const STAFF_API = `${BASE_URL}/api/staff`;
 const AVAILABILITY_API = `${BASE_URL}/api/bookings/availability`;
 const HOLD_API = `${BASE_URL}/api/bookings/hold`;
 
@@ -238,8 +244,20 @@ export default function Staff() {
     try {
       setLoadingStaff(true);
 
+      // Fixed: build the category query dynamically from the actual
+      // bookingType this screen received (e.g. "Hair", "Body",
+      // "Bridal", "Face"), instead of always requesting Hair staff.
+      // Trimmed in case bookingType ever arrives with stray
+      // whitespace, though the real fix for trailing-space category
+      // values belongs in the database/backend, not here.
+      const normalizedCategory = bookingTypeText.trim();
+
+      const categoryQuery = normalizedCategory
+        ? `?category=${encodeURIComponent(normalizedCategory)}`
+        : "";
+
       const response = await fetch(
-        STAFF_API
+        `${STAFF_API}${categoryQuery}`
       );
 
       const data =
@@ -299,7 +317,7 @@ export default function Staff() {
     } finally {
       setLoadingStaff(false);
     }
-  }, []);
+  }, [bookingTypeText]);
 
   const checkAvailability =
     useCallback(async () => {

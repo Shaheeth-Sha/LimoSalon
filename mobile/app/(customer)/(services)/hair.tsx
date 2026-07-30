@@ -10,7 +10,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
-const SERVICES_API = "https://limosalon.onrender.com/api/services?category=Hair";
+const SERVICES_API = "http://10.0.2.2:5000/api/services?category=Hair";
 
 type ServiceItem = {
   _id: string;

@@ -1,4 +1,5 @@
 import React, {
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -9,6 +10,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -37,6 +39,17 @@ import {
 | - Past times on today's date cannot be selected
 | - Booking hold is NOT created here
 | - Hold starts after staff selection
+|
+| - Fixed: the list of offered times used to be a hardcoded array
+|   in this file. It's now fetched from the backend
+|   (/api/time-slots), which stores an admin-editable business-hours
+|   window per booking type — bridal bookings offer 4:00 am to
+|   10:00 pm, everything else (hair/face/body) offers 8:00 am to
+|   6:00 pm. This means opening hours can change from the admin side
+|   in the future without an app update. Staff-level availability
+|   (who's actually free at a given time) is unrelated to this and
+|   is still handled dynamically further down the flow, on the Staff
+|   screen.
 |
 |--------------------------------------------------------------------------
 */
@@ -68,6 +81,26 @@ type DateItem = {
 
 
 
+const BASE_URL = "http://10.0.2.2:5000";
+const TIME_SLOTS_API = `${BASE_URL}/api/time-slots`;
+
+// Used only if the network request itself fails (e.g. offline) so
+// the screen doesn't go completely blank — matches the old hardcoded
+// list. Once the backend responds successfully even once, this is
+// never touched again.
+const FALLBACK_TIMES = [
+  "08.00 am",
+  "09.00 am",
+  "10.00 am",
+  "11.00 am",
+  "12.00 pm",
+  "01.00 pm",
+  "02.00 pm",
+  "03.00 pm",
+];
+
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -90,6 +123,23 @@ const getParamValue = (
 
   return value ?? "";
 
+};
+
+
+
+const readJsonResponse = async (
+  response: Response
+): Promise<any> => {
+  const rawBody = await response.text();
+  if (!rawBody) return {};
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error(
+      `Unexpected server response (${response.status})`
+    );
+  }
 };
 
 
@@ -434,6 +484,14 @@ export default function DateAndTime(){
 
 
 
+  const [times, setTimes] =
+    useState<string[]>([]);
+
+
+  const [loadingTimes, setLoadingTimes] =
+    useState(true);
+
+
 
   const dates =
     useMemo(
@@ -465,18 +523,59 @@ export default function DateAndTime(){
 
 
 
-  const times = [
+  // Fetches the offered time window for this booking type from the
+  // backend. Runs once bookingType is known (it's a route param, so
+  // it's already present on mount, but this still reacts correctly
+  // if it were ever to change).
+  useEffect(() => {
+    let isCancelled = false;
 
-    "08.00 am",
-    "09.00 am",
-    "10.00 am",
-    "11.00 am",
-    "12.00 pm",
-    "01.00 pm",
-    "02.00 pm",
-    "03.00 pm",
+    const loadTimes = async () => {
+      try {
+        setLoadingTimes(true);
 
-  ];
+        const response = await fetch(
+          `${TIME_SLOTS_API}?bookingType=${encodeURIComponent(booking)}`
+        );
+
+        const data = await readJsonResponse(response);
+
+        if (!response.ok) {
+          throw new Error(
+            data.message || "Unable to load available times"
+          );
+        }
+
+        if (!isCancelled) {
+          const fetchedTimes = Array.isArray(data.times)
+            ? data.times
+            : FALLBACK_TIMES;
+
+          setTimes(
+            fetchedTimes.length > 0 ? fetchedTimes : FALLBACK_TIMES
+          );
+        }
+      } catch (error) {
+        console.error("Load time slots failed:", error);
+
+        if (!isCancelled) {
+          setTimes(FALLBACK_TIMES);
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoadingTimes(false);
+        }
+      }
+    };
+
+    loadTimes();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [booking]);
+
+
 
   return (
 
@@ -742,94 +841,114 @@ export default function DateAndTime(){
 
 
 
+        {
+          loadingTimes ? (
 
-        <View style={styles.timeGrid}>
+            <View style={styles.timeLoaderBox}>
 
+              <ActivityIndicator
+                size="small"
+                color="#FF2D55"
+              />
 
-          {
-            times.map((time)=>{
+              <Text style={styles.timeLoaderText}>
+                Loading available times...
+              </Text>
 
+            </View>
 
-              const blocked =
-                !selectedDate ||
-                isPastTime(
-                  selectedDate,
-                  time
-                );
+          ) : (
 
-
-
-              const selected =
-                selectedTime === time;
-
-
-
-              return (
+            <View style={styles.timeGrid}>
 
 
-                <TouchableOpacity
-
-                  key={time}
-
-
-                  disabled={blocked}
+              {
+                times.map((time)=>{
 
 
-                  style={[
-
-                    styles.timeBox,
-
-
-                    selected &&
-                    styles.timeActive,
-
-
-                    blocked &&
-                    styles.timeDisabled
-
-                  ]}
+                  const blocked =
+                    !selectedDate ||
+                    isPastTime(
+                      selectedDate,
+                      time
+                    );
 
 
-                  onPress={()=>
-                    setSelectedTime(time)
-                  }
+
+                  const selected =
+                    selectedTime === time;
 
 
-                >
+
+                  return (
 
 
-                  <Text
-                    style={[
+                    <TouchableOpacity
 
-                      styles.timeText,
-
-
-                      selected &&
-                      styles.timeTextActive,
+                      key={time}
 
 
-                      blocked &&
-                      styles.disabledText
-
-                    ]}
-                  >
-
-                    {time}
-
-                  </Text>
+                      disabled={blocked}
 
 
-                </TouchableOpacity>
+                      style={[
+
+                        styles.timeBox,
 
 
-              );
+                        selected &&
+                        styles.timeActive,
 
 
-            })
-          }
+                        blocked &&
+                        styles.timeDisabled
+
+                      ]}
 
 
-        </View>
+                      onPress={()=>
+                        setSelectedTime(time)
+                      }
+
+
+                    >
+
+
+                      <Text
+                        style={[
+
+                          styles.timeText,
+
+
+                          selected &&
+                          styles.timeTextActive,
+
+
+                          blocked &&
+                          styles.disabledText
+
+                        ]}
+                      >
+
+                        {time}
+
+                      </Text>
+
+
+                    </TouchableOpacity>
+
+
+                  );
+
+
+                })
+              }
+
+
+            </View>
+
+          )
+        }
 
 
         <View
@@ -1166,6 +1285,32 @@ sectionTitle:{
  fontSize:16,
 
  fontWeight:"700",
+
+},
+
+
+
+timeLoaderBox:{
+
+ flexDirection:"row",
+
+ alignItems:"center",
+
+ justifyContent:"center",
+
+ paddingVertical:30,
+
+},
+
+
+
+timeLoaderText:{
+
+ marginLeft:10,
+
+ color:"#777",
+
+ fontSize:13,
 
 },
 

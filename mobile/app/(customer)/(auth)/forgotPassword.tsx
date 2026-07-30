@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AlertModal, { AlertType } from '../../../components/AlertModal';
 
-const API_URL = "https://limosalon.onrender.com/api/customers/forgot-password";
+const API_URL = "http://10.0.2.2:5000/api/customers/forgot-password";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
