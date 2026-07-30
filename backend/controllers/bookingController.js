@@ -123,6 +123,23 @@ const escapeRegex = (value) => {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
+// New: shifts a "YYYY-MM-DD" date string by a number of days (can be
+// negative). Needed so conflict checks can also look at the day
+// before/after a booking's date — required once bookingsOverlap
+// compares real timestamps instead of "minutes since midnight",
+// since a late booking's duration can push its end time past
+// midnight into the next calendar day (and, symmetrically, an
+// existing booking from the previous evening can spill into today).
+const shiftDateString = (dateStr, deltaDays) => {
+  const [year, month, day] = String(dateStr).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+
+  return `${date.getUTCFullYear()}-${String(
+    date.getUTCMonth() + 1
+  ).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+};
+
 const getCustomerId = (req) => {
   return req.customer?._id || req.customer?.id || null;
 };
@@ -312,15 +329,26 @@ const ensureFutureSlot = (selectedDate, selectedTime) => {
   }
 };
 
+// Fixed: this previously compared "minutes since midnight" for both
+// bookings, and treated anything whose end time crossed past 1440
+// minutes (past midnight) as automatically NOT a conflict — the
+// opposite of correct. A 10:00 pm booking with a 240-minute (4-hour)
+// duration ends at 2:00 am the next day; that guard clause silently
+// waved through any real double-booking in that window.
+//
+// Now both bookings' start/end are converted to real absolute
+// timestamps via getBookingDateTime (which already correctly handles
+// date + time + timezone), so overlap is just a normal interval
+// comparison — no artificial day boundary, correct regardless of how
+// far past midnight a booking runs.
 const bookingsOverlap = ({
+  requestedDate,
   requestedStart,
   requestedDuration,
+  existingDate,
   existingStart,
   existingDuration,
 }) => {
-  const requestedStartMinutes = timeToMinutes(requestedStart);
-  const existingStartMinutes = timeToMinutes(existingStart);
-
   const safeRequestedDuration = Math.max(
     Number(requestedDuration) || 0,
     1
@@ -331,23 +359,29 @@ const bookingsOverlap = ({
     1
   );
 
-  const requestedEndMinutes =
-    requestedStartMinutes + safeRequestedDuration;
+  const requestedStartDateTime = getBookingDateTime(
+    requestedDate,
+    requestedStart
+  );
 
-  const existingEndMinutes =
-    existingStartMinutes + safeExistingDuration;
+  const existingStartDateTime = getBookingDateTime(
+    existingDate,
+    existingStart
+  );
 
-    if(requestedEndMinutes > 1440){
-    return false;
-}
+  const requestedEndDateTime = new Date(
+    requestedStartDateTime.getTime() +
+      safeRequestedDuration * 60 * 1000
+  );
 
-if(existingEndMinutes > 1440){
-    return false;
-}
+  const existingEndDateTime = new Date(
+    existingStartDateTime.getTime() +
+      safeExistingDuration * 60 * 1000
+  );
 
   return (
-    requestedStartMinutes < existingEndMinutes &&
-    existingStartMinutes < requestedEndMinutes
+    requestedStartDateTime < existingEndDateTime &&
+    existingStartDateTime < requestedEndDateTime
   );
 };
 
@@ -413,10 +447,23 @@ const findConfirmedBookingConflict = async ({
   estimatedDuration,
   excludeBookingId,
 }) => {
+  // Fixed: previously only matched bookings on this exact calendar
+  // date, via a regex anchored to selectedDate. That meant a booking
+  // whose duration spills past midnight into the next day (or an
+  // existing booking from the previous evening spilling into today)
+  // was never even fetched for comparison — regardless of whether
+  // bookingsOverlap's math was correct. Now the query pulls in the
+  // day before and the day after as well; bookingsOverlap (using
+  // real timestamps) filters out anything that doesn't genuinely
+  // overlap, so the extra candidates are harmless.
   const query = {
     "staff.staffId": staffId,
     selectedDate: {
-      $regex: `^${escapeRegex(selectedDate)}`,
+      $in: [
+        shiftDateString(selectedDate, -1),
+        selectedDate,
+        shiftDateString(selectedDate, 1),
+      ],
     },
     status: {
       $nin: ["Cancelled"],
@@ -435,14 +482,16 @@ const findConfirmedBookingConflict = async ({
   }
 
   const existingBookings = await Booking.find(query)
-    .select("selectedTime estimatedDuration status")
+    .select("selectedDate selectedTime estimatedDuration status")
     .lean();
 
   return (
     existingBookings.find((booking) =>
       bookingsOverlap({
+        requestedDate: selectedDate,
         requestedStart: selectedTime,
         requestedDuration: estimatedDuration,
+        existingDate: booking.selectedDate,
         existingStart: booking.selectedTime,
         existingDuration: booking.estimatedDuration,
       })
@@ -458,9 +507,19 @@ const findActiveHoldConflict = async ({
   estimatedDuration,
   excludeHoldId,
 }) => {
+  // Fixed: same cross-midnight gap as findConfirmedBookingConflict —
+  // previously matched only holds on the exact same calendar date,
+  // so a hold whose duration spills past midnight (or one held the
+  // previous evening spilling into today) was never checked against.
   const query = {
     staffId,
-    selectedDate,
+    selectedDate: {
+      $in: [
+        shiftDateString(selectedDate, -1),
+        selectedDate,
+        shiftDateString(selectedDate, 1),
+      ],
+    },
     expiresAt: {
       $gt: new Date(),
     },
@@ -489,8 +548,10 @@ const findActiveHoldConflict = async ({
       }
 
       return bookingsOverlap({
+        requestedDate: selectedDate,
         requestedStart: selectedTime,
         requestedDuration: estimatedDuration,
+        existingDate: hold.selectedDate,
         existingStart: hold.selectedTime,
         existingDuration: hold.estimatedDuration,
       });

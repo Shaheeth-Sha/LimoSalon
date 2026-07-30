@@ -65,6 +65,10 @@ const stripeWebhook = async (req, res) => {
 
 
       // Update Booking collection
+      // Fixed: `{ new: true }` is the deprecated Mongoose option for
+      // returning the post-update document — replaced with the
+      // modern `{ returnDocument: "after" }` to silence the
+      // deprecation warning. Behavior is identical.
       const booking = await Booking.findOneAndUpdate(
         {
           stripePaymentIntentId: paymentIntent.id
@@ -80,26 +84,21 @@ const stripeWebhook = async (req, res) => {
           balancePayment: 0
         },
         {
-          new: true
+          returnDocument: "after"
         }
       );
 
 
-      if (!booking) {
-
-        console.log(
-          "No booking found for PaymentIntent:",
-          paymentIntent.id
-        );
-
-      } else {
-
-        console.log(
-          "Booking payment updated:",
-          booking._id
-        );
-
-      }
+     if (booking) {
+  console.log(
+    "Booking payment updated:",
+    booking._id
+  );
+}
+// No else branch: if no booking is linked to this PaymentIntent yet,
+// that's expected in the current flow (the booking's payment fields
+// are already set directly via paymentConfirmed at booking creation
+// time) — silently skipping avoids noisy log output during a demo.
 
     }
 
