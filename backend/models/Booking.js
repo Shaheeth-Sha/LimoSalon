@@ -99,7 +99,7 @@ const bookingSchema = new mongoose.Schema(
 
     bookingType: {
       type: String,
-      enum: ["hair", "bridal", "face", "body"],
+      enum: ["hair", "bridal", "face", "body", "nail"],
       default: "hair",
     },
 
@@ -186,6 +186,16 @@ const bookingSchema = new mongoose.Schema(
       default: null,
     },
 
+      reminderOneHourSent: {
+      type: Boolean,
+      default: false,
+    },
+ 
+    reminderThirtyMinSent: {
+      type: Boolean,
+      default: false,
+    },
+
     status: {
       type: String,
       enum: [
@@ -194,7 +204,12 @@ const bookingSchema = new mongoose.Schema(
         "Completed",
         "Cancelled",
       ],
-      default: "Confirmed",
+      // Real-world flow: a booking starts as Pending until the
+      // assigned staff member explicitly confirms it (see
+      // staffScheduleController.js's updateBookingStatus). Was
+      // "Confirmed" — every booking used to auto-confirm itself with
+      // no staff review step at all.
+      default: "Pending",
     },
 
     // New: records what this booking's date/time was each time it
@@ -208,6 +223,15 @@ const bookingSchema = new mongoose.Schema(
         {
           previousDate: String,
           previousTime: String,
+          // "event" (default, for every pre-existing entry) or
+          // "trial" — lets a bridal booking's reschedule history tell
+          // the two kinds of reschedule apart instead of conflating a
+          // trial-slot move with a main-event move.
+          kind: {
+            type: String,
+            enum: ["event", "trial"],
+            default: "event",
+          },
           rescheduledAt: {
             type: Date,
             default: Date.now,
@@ -215,6 +239,32 @@ const bookingSchema = new mongoose.Schema(
         },
       ],
       default: [],
+    },
+
+    // New: bridal-only trial makeup add-on, collected by the
+    // trialMakeup.tsx / trialMakeupDate.tsx / additionalNotes.tsx
+    // mini-flow inserted between staff selection and confirm.tsx.
+    // Left at their defaults for every other booking type.
+    wantsTrialMakeup: {
+      type: Boolean,
+      default: false,
+    },
+
+    trialMakeupDate: {
+      type: String,
+      default: "",
+    },
+
+    trialMakeupTime: {
+      type: String,
+      default: "",
+    },
+
+    notes: {
+      type: String,
+      default: "",
+      trim: true,
+      maxlength: 200,
     },
   },
   {

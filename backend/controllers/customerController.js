@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const Customer = require("../models/Customer");
 const EmailOtp = require("../models/EmailOtp");
 const sendEmail = require("../utils/sendEmail");
+const { saveBase64Avatar, deleteAvatarFile } = require("../utils/avatarStorage");
 const { OAuth2Client } = require("google-auth-library");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_WEB_CLIENT_ID);
@@ -205,6 +206,7 @@ const registerCustomer = async (req, res) => {
         phone: customer.phone,
         phoneVerified: customer.phoneVerified,
         emailVerified: customer.emailVerified,
+        avatar: customer.avatar || "",
       },
       token: generateToken(customer._id),
     });
@@ -250,6 +252,7 @@ const loginCustomer = async (req, res) => {
         phone: customer.phone,
         phoneVerified: customer.phoneVerified,
         emailVerified: customer.emailVerified,
+        avatar: customer.avatar || "",
       },
       token: generateToken(customer._id),
     });
@@ -488,6 +491,7 @@ const googleAuth = async (req, res) => {
         phone: customer.phone,
         phoneVerified: customer.phoneVerified,
         emailVerified: customer.emailVerified,
+        avatar: customer.avatar || "",
       },
       token: generateToken(customer._id),
     });
@@ -546,6 +550,7 @@ const updateCustomerProfile = async (req, res) => {
         phoneVerified: customer.phoneVerified,
         emailVerified: customer.emailVerified,
         authProvider: customer.authProvider,
+        avatar: customer.avatar || "",
       },
     });
   } catch (error) {
@@ -556,6 +561,84 @@ const updateCustomerProfile = async (req, res) => {
   }
 };
 
+/* =========================
+   UPDATE / REMOVE PROFILE PHOTO
+========================= */
+const updateCustomerAvatar = async (req, res) => {
+  try {
+    const { image } = req.body;
+    const customer = req.customer; // set by protectCustomer middleware
+
+    if (!image) {
+      return res.status(400).json({ message: "No image provided" });
+    }
+
+    const savedPath = saveBase64Avatar(image);
+    const previousAvatar = customer.avatar;
+
+    customer.avatar = savedPath;
+    await customer.save();
+
+    // Only clean up the old file once the new one has actually saved —
+    // if anything above had failed, the customer keeps their existing
+    // photo instead of ending up with neither.
+    if (previousAvatar) {
+      deleteAvatarFile(previousAvatar);
+    }
+
+    res.status(200).json({
+      message: "Profile photo updated successfully",
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
+        authProvider: customer.authProvider,
+        avatar: customer.avatar,
+      },
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      message: error.statusCode ? error.message : "Failed to update profile photo",
+      error: error.message,
+    });
+  }
+};
+
+const removeCustomerAvatar = async (req, res) => {
+  try {
+    const customer = req.customer;
+    const previousAvatar = customer.avatar;
+
+    customer.avatar = "";
+    await customer.save();
+
+    if (previousAvatar) {
+      deleteAvatarFile(previousAvatar);
+    }
+
+    res.status(200).json({
+      message: "Profile photo removed",
+      customer: {
+        id: customer._id,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone,
+        phoneVerified: customer.phoneVerified,
+        emailVerified: customer.emailVerified,
+        authProvider: customer.authProvider,
+        avatar: customer.avatar,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to remove profile photo",
+      error: error.message,
+    });
+  }
+};
 
 module.exports = {
   registerCustomer,
@@ -569,4 +652,6 @@ module.exports = {
   resetPassword,
   googleAuth,
   updateCustomerProfile,
+  updateCustomerAvatar,
+  removeCustomerAvatar,
 };

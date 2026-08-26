@@ -18,8 +18,14 @@ const {
 const { protectCustomer } = require("../middleware/authMiddleware");
 const {  googleAuth } = require("../controllers/customerController");
 
-const {  updateCustomerProfile } = require("../controllers/customerController");
+const {
+  updateCustomerProfile,
+  updateCustomerAvatar,
+  removeCustomerAvatar,
+} = require("../controllers/customerController");
 router.put("/profile", protectCustomer, updateCustomerProfile);
+router.put("/profile/photo", protectCustomer, updateCustomerAvatar);
+router.delete("/profile/photo", protectCustomer, removeCustomerAvatar);
 
 
 router.post("/register", registerCustomer);

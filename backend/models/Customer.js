@@ -48,6 +48,15 @@ const customerSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    // Server-relative path to an uploaded profile photo (e.g.
+    // "/uploads/avatars/xxxx.jpg"), set via PUT
+    // /api/customers/profile/photo — see backend/utils/avatarStorage.js.
+    // Blank means "no photo, show initials instead" on the client.
+    avatar: {
+      type: String,
+      default: "",
+    },
   },
   {
     timestamps: true,

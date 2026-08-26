@@ -3,13 +3,24 @@ const crypto = require("crypto");
 const Booking = require("../models/Booking");
 const BookingHold = require("../models/BookingHold");
 const Customer = require("../models/Customer");
+const Staff = require("../models/Staff");
+const ClaimedReward = require("../models/ClaimedReward");
+const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
+const { createNotification } = require("./notificationController");
 
 const HOLD_DURATION_MINUTES = 10;
 const SLOT_INTERVAL_MINUTES = 15;
 
-// Sri Lanka = UTC+05:30.
-// Change through .env later if required.
+// Bridal-only: the trial makeup session is a second appointment with
+// the same staff member, distinct from the main event slot. It goes
+// through the exact same hold + conflict-check machinery as every
+// other slot (createBookingHold / findConfirmedBookingConflict) so a
+// staff member can never be double-booked for a trial the same way
+// they can't for a haircut — this is just a fixed assumed duration
+// for that second appointment, since the customer never picks one.
+const TRIAL_MAKEUP_DURATION_MINUTES = 60;
+
 const APP_TIMEZONE_OFFSET_MINUTES = Number(
   process.env.APP_TIMEZONE_OFFSET_MINUTES || 330
 );
@@ -47,12 +58,6 @@ const formatDateForEmail = (dateStr) => {
   }
 };
 
-// New: sends a booking confirmation/reschedule email using the
-// existing sendEmail util (same Nodemailer transporter already used
-// for OTP emails). Wrapped in try/catch wherever it's called so an
-// email failure can NEVER cause the booking/reschedule itself to
-// fail — the booking is the important transaction, the email is a
-// notification on top of it.
 const buildBookingEmailHtml = ({ customerName, booking, isReschedule, previousDate, previousTime }) => {
   const serviceRows = (booking.services || [])
     .map(
@@ -67,14 +72,24 @@ const buildBookingEmailHtml = ({ customerName, booking, isReschedule, previousDa
        </p>`
     : "";
 
+  // Fixed: bookings start as Pending now, not auto-Confirmed — this
+  // email used to say "Booking Confirmed" the instant a request was
+  // submitted, before staff had reviewed it at all.
+  const pendingNote = !isReschedule
+    ? `<p style="color:#1D5FAB;background:#EAF2FF;padding:10px 14px;border-radius:8px;">
+         This is a request, not a confirmed booking yet — the salon will confirm it shortly and you'll get another email once they do.
+       </p>`
+    : "";
+
   return `
     <div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;color:#111;">
-      <h2 style="color:#FF2D75;">${isReschedule ? "Your Appointment Has Been Rescheduled" : "Booking Confirmed"}</h2>
+      <h2 style="color:#FF2D75;">${isReschedule ? "Your Appointment Has Been Rescheduled" : "Booking Requested"}</h2>
       <p>Hi ${customerName || "there"},</p>
       <p>${isReschedule
         ? "Here are your updated appointment details:"
-        : "Thank you for booking with LimoSalon. Here are your appointment details:"}</p>
+        : "Thank you for booking with LimoSalon. Here are your requested appointment details:"}</p>
       ${rescheduleNote}
+      ${pendingNote}
       <table style="width:100%;border-collapse:collapse;margin:16px 0;">
         ${serviceRows}
       </table>
@@ -113,8 +128,6 @@ const sendBookingEmail = async ({ customerId, booking, isReschedule, previousDat
       }),
     });
   } catch (emailError) {
-    // Deliberately swallowed: a failed confirmation email should
-    // never cause the booking/reschedule itself to fail or roll back.
     console.error("Booking email failed to send:", emailError);
   }
 };
@@ -123,41 +136,16 @@ const escapeRegex = (value) => {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 };
 
-// New: shifts a "YYYY-MM-DD" date string by a number of days (can be
-// negative). Needed so conflict checks can also look at the day
-// before/after a booking's date — required once bookingsOverlap
-// compares real timestamps instead of "minutes since midnight",
-// since a late booking's duration can push its end time past
-// midnight into the next calendar day (and, symmetrically, an
-// existing booking from the previous evening can spill into today).
-const shiftDateString = (dateStr, deltaDays) => {
-  const [year, month, day] = String(dateStr).split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-
-  return `${date.getUTCFullYear()}-${String(
-    date.getUTCMonth() + 1
-  ).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-};
-
 const getCustomerId = (req) => {
   return req.customer?._id || req.customer?.id || null;
 };
 
-// Fixed: previously this only ever detected "bridal" vs. everything
-// else, so Face and Body bookings were silently saved as "hair" —
-// and the schema's enum used to only allow "hair"/"bridal" anyway,
-// so this couldn't have worked even if it tried. Now that the schema
-// accepts "face"/"body" too, this properly classifies all four.
-// Checks bookingType directly first (most reliable, since the
-// frontend should be sending the actual category), and only falls
-// back to scanning the service data as a backup.
 const detectServiceCategory = (services, bookingType) => {
   const normalizedBookingType = String(bookingType || "")
     .trim()
     .toLowerCase();
 
-  if (["bridal", "hair", "face", "body"].includes(normalizedBookingType)) {
+  if (["bridal", "hair", "face", "body", "nail"].includes(normalizedBookingType)) {
     return normalizedBookingType;
   }
 
@@ -172,6 +160,7 @@ const detectServiceCategory = (services, bookingType) => {
   if (serviceText.includes("bridal")) return "bridal";
   if (serviceText.includes("face") || serviceText.includes("facial")) return "face";
   if (serviceText.includes("body")) return "body";
+  if (serviceText.includes("nail")) return "nail";
   if (serviceText.includes("hair")) return "hair";
 
   return "hair";
@@ -205,11 +194,9 @@ const normalizeBookingDate = (value) => {
     throw new Error("Invalid booking date");
   }
 
- return `${parsedDate.getFullYear()}-${String(
-  parsedDate.getMonth() + 1
-).padStart(2, "0")}-${String(
-  parsedDate.getDate()
-).padStart(2, "0")}`;
+  return `${parsedDate.getFullYear()}-${String(
+    parsedDate.getMonth() + 1
+  ).padStart(2, "0")}-${String(parsedDate.getDate()).padStart(2, "0")}`;
 };
 
 const normalizeBookingTime = (value) => {
@@ -232,19 +219,11 @@ const normalizeBookingTime = (value) => {
     const minutes = Number(twelveHourMatch[2]);
     const period = twelveHourMatch[3];
 
-    if (
-      hours < 1 ||
-      hours > 12 ||
-      minutes < 0 ||
-      minutes > 59
-    ) {
+    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) {
       throw new Error("Invalid booking time");
     }
 
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
-      2,
-      "0"
-    )} ${period}`;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
   }
 
   const twentyFourHourMatch = rawValue.match(/^(\d{1,2}):(\d{2})$/);
@@ -253,34 +232,23 @@ const normalizeBookingTime = (value) => {
     const hours = Number(twentyFourHourMatch[1]);
     const minutes = Number(twentyFourHourMatch[2]);
 
-    if (
-      hours < 0 ||
-      hours > 23 ||
-      minutes < 0 ||
-      minutes > 59
-    ) {
+    if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
       throw new Error("Invalid booking time");
     }
 
     const period = hours >= 12 ? "pm" : "am";
     const twelveHour = hours % 12 || 12;
 
-    return `${String(twelveHour).padStart(2, "0")}:${String(
-      minutes
-    ).padStart(2, "0")} ${period}`;
+    return `${String(twelveHour).padStart(2, "0")}:${String(minutes).padStart(2, "0")} ${period}`;
   }
 
-  throw new Error(
-    "Invalid booking time. Use a format such as 09:00 am."
-  );
+  throw new Error("Invalid booking time. Use a format such as 09:00 am.");
 };
 
 const timeToMinutes = (value) => {
   const normalizedTime = normalizeBookingTime(value);
 
-  const match = normalizedTime.match(
-    /^(\d{2}):(\d{2})\s(am|pm)$/
-  );
+  const match = normalizedTime.match(/^(\d{2}):(\d{2})\s(am|pm)$/);
 
   if (!match) {
     throw new Error("Invalid booking time");
@@ -317,30 +285,23 @@ const getBookingDateTime = (selectedDate, selectedTime) => {
 };
 
 const ensureFutureSlot = (selectedDate, selectedTime) => {
-  const bookingDateTime = getBookingDateTime(
-    selectedDate,
-    selectedTime
-  );
+  const bookingDateTime = getBookingDateTime(selectedDate, selectedTime);
 
   if (bookingDateTime.getTime() <= Date.now()) {
-    throw new Error(
-      "The selected booking date and time has already passed"
-    );
+    throw new Error("The selected booking date and time has already passed");
   }
 };
 
-// Fixed: this previously compared "minutes since midnight" for both
-// bookings, and treated anything whose end time crossed past 1440
-// minutes (past midnight) as automatically NOT a conflict — the
-// opposite of correct. A 10:00 pm booking with a 240-minute (4-hour)
-// duration ends at 2:00 am the next day; that guard clause silently
-// waved through any real double-booking in that window.
-//
-// Now both bookings' start/end are converted to real absolute
-// timestamps via getBookingDateTime (which already correctly handles
-// date + time + timezone), so overlap is just a normal interval
-// comparison — no artificial day boundary, correct regardless of how
-// far past midnight a booking runs.
+const shiftDateString = (dateStr, days) => {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(
+    date.getUTCDate()
+  ).padStart(2, "0")}`;
+};
+
 const bookingsOverlap = ({
   requestedDate,
   requestedStart,
@@ -349,64 +310,28 @@ const bookingsOverlap = ({
   existingStart,
   existingDuration,
 }) => {
-  const safeRequestedDuration = Math.max(
-    Number(requestedDuration) || 0,
-    1
-  );
+  const requestedStartTime = getBookingDateTime(requestedDate, requestedStart).getTime();
+  const existingStartTime = getBookingDateTime(existingDate, existingStart).getTime();
 
-  const safeExistingDuration = Math.max(
-    Number(existingDuration) || 0,
-    1
-  );
+  const safeRequestedDuration = Math.max(Number(requestedDuration) || 0, 1) * 60 * 1000;
+  const safeExistingDuration = Math.max(Number(existingDuration) || 0, 1) * 60 * 1000;
 
-  const requestedStartDateTime = getBookingDateTime(
-    requestedDate,
-    requestedStart
-  );
+  const requestedEndTime = requestedStartTime + safeRequestedDuration;
+  const existingEndTime = existingStartTime + safeExistingDuration;
 
-  const existingStartDateTime = getBookingDateTime(
-    existingDate,
-    existingStart
-  );
-
-  const requestedEndDateTime = new Date(
-    requestedStartDateTime.getTime() +
-      safeRequestedDuration * 60 * 1000
-  );
-
-  const existingEndDateTime = new Date(
-    existingStartDateTime.getTime() +
-      safeExistingDuration * 60 * 1000
-  );
-
-  return (
-    requestedStartDateTime < existingEndDateTime &&
-    existingStartDateTime < requestedEndDateTime
-  );
+  return requestedStartTime < existingEndTime && existingStartTime < requestedEndTime;
 };
 
-const generateSlotKeys = ({
-  staffId,
-  selectedDate,
-  selectedTime,
-  estimatedDuration,
-}) => {
+const generateSlotKeys = ({ staffId, selectedDate, selectedTime, estimatedDuration }) => {
   const startMinutes = timeToMinutes(selectedTime);
   const duration = Math.max(Number(estimatedDuration) || 0, 1);
 
-  // Round the occupied period up to the nearest 15-minute segment.
   const endMinutes =
-    startMinutes +
-    Math.ceil(duration / SLOT_INTERVAL_MINUTES) *
-      SLOT_INTERVAL_MINUTES;
+    startMinutes + Math.ceil(duration / SLOT_INTERVAL_MINUTES) * SLOT_INTERVAL_MINUTES;
 
   const slotKeys = [];
 
-  for (
-    let minute = startMinutes;
-    minute < endMinutes;
-    minute += SLOT_INTERVAL_MINUTES
-  ) {
+  for (let minute = startMinutes; minute < endMinutes; minute += SLOT_INTERVAL_MINUTES) {
     slotKeys.push(`${staffId}|${selectedDate}|${minute}`);
   }
 
@@ -418,22 +343,12 @@ const calculateEstimatedDuration = (services) => {
     throw new Error("At least one service is required");
   }
 
-  const estimatedDuration = services.reduce(
-    (total, service) =>{
+  const estimatedDuration = services.reduce((total, service) => {
+    const duration = Number(service?.duration);
+    return total + (Number.isFinite(duration) ? duration : 0);
+  }, 0);
 
-      const duration = Number(service?.duration);
-
-      return total + (
-        Number.isFinite(duration)
-        ? duration
-        : 0
-      );
-    } ,0);
-
-  if (
-    !Number.isFinite(estimatedDuration) ||
-    estimatedDuration <= 0
-  ) {
+  if (!Number.isFinite(estimatedDuration) || estimatedDuration <= 0) {
     throw new Error("A valid service duration is required");
   }
 
@@ -447,55 +362,70 @@ const findConfirmedBookingConflict = async ({
   estimatedDuration,
   excludeBookingId,
 }) => {
-  // Fixed: previously only matched bookings on this exact calendar
-  // date, via a regex anchored to selectedDate. That meant a booking
-  // whose duration spills past midnight into the next day (or an
-  // existing booking from the previous evening spilling into today)
-  // was never even fetched for comparison — regardless of whether
-  // bookingsOverlap's math was correct. Now the query pulls in the
-  // day before and the day after as well; bookingsOverlap (using
-  // real timestamps) filters out anything that doesn't genuinely
-  // overlap, so the extra candidates are harmless.
+  const nearbyDates = [
+    shiftDateString(selectedDate, -1),
+    selectedDate,
+    shiftDateString(selectedDate, 1),
+  ];
+
+  // A staff member can be busy either with another customer's main
+  // appointment OR with another bride's trial makeup session — the
+  // requested slot (whichever kind it is) has to be checked against
+  // both, since both occupy that staff member's time equally.
   const query = {
     "staff.staffId": staffId,
-    selectedDate: {
-      $in: [
-        shiftDateString(selectedDate, -1),
-        selectedDate,
-        shiftDateString(selectedDate, 1),
-      ],
-    },
-    status: {
-      $nin: ["Cancelled"],
-    },
+    // Completed excluded too, not just Cancelled — a staff member can
+    // now mark a booking Completed ahead of its actual scheduled time
+    // (see staffScheduleController.js's updateBookingStatus), and a
+    // Completed appointment has no further claim on that slot, so it
+    // must not permanently block new bookings there.
+    status: { $nin: ["Cancelled", "Completed"] },
+    $or: [
+      { selectedDate: { $in: nearbyDates } },
+      { wantsTrialMakeup: true, trialMakeupDate: { $in: nearbyDates } },
+    ],
   };
 
-  // New: when rescheduling, the booking being moved still exists in
-  // the database under its OLD date/time. If the new date happens to
-  // be the same calendar day, this query would otherwise find the
-  // booking's own current record and could incorrectly treat it as a
-  // conflict with itself. Excluding it here only affects callers that
-  // explicitly pass excludeBookingId (i.e. reschedule) — every
-  // existing call site is unaffected.
   if (excludeBookingId) {
     query._id = { $ne: excludeBookingId };
   }
 
   const existingBookings = await Booking.find(query)
-    .select("selectedDate selectedTime estimatedDuration status")
+    .select(
+      "selectedDate selectedTime estimatedDuration status wantsTrialMakeup trialMakeupDate trialMakeupTime"
+    )
     .lean();
 
   return (
-    existingBookings.find((booking) =>
-      bookingsOverlap({
+    existingBookings.find((booking) => {
+      const mainSlotOverlap = bookingsOverlap({
         requestedDate: selectedDate,
         requestedStart: selectedTime,
         requestedDuration: estimatedDuration,
         existingDate: booking.selectedDate,
         existingStart: booking.selectedTime,
         existingDuration: booking.estimatedDuration,
-      })
-    ) || null
+      });
+
+      if (mainSlotOverlap) return true;
+
+      if (
+        booking.wantsTrialMakeup &&
+        booking.trialMakeupDate &&
+        booking.trialMakeupTime
+      ) {
+        return bookingsOverlap({
+          requestedDate: selectedDate,
+          requestedStart: selectedTime,
+          requestedDuration: estimatedDuration,
+          existingDate: booking.trialMakeupDate,
+          existingStart: booking.trialMakeupTime,
+          existingDuration: TRIAL_MAKEUP_DURATION_MINUTES,
+        });
+      }
+
+      return false;
+    }) || null
   );
 };
 
@@ -507,10 +437,6 @@ const findActiveHoldConflict = async ({
   estimatedDuration,
   excludeHoldId,
 }) => {
-  // Fixed: same cross-midnight gap as findConfirmedBookingConflict —
-  // previously matched only holds on the exact same calendar date,
-  // so a hold whose duration spills past midnight (or one held the
-  // previous evening spilling into today) was never checked against.
   const query = {
     staffId,
     selectedDate: {
@@ -520,30 +446,20 @@ const findActiveHoldConflict = async ({
         shiftDateString(selectedDate, 1),
       ],
     },
-    expiresAt: {
-      $gt: new Date(),
-    },
+    expiresAt: { $gt: new Date() },
   };
 
   if (excludeHoldId) {
-    query._id = {
-      $ne: excludeHoldId,
-    };
+    query._id = { $ne: excludeHoldId };
   }
 
   const holds = await BookingHold.find(query)
-    .select(
-      "customer selectedTime estimatedDuration expiresAt staffId selectedDate"
-    )
+    .select("customer selectedDate selectedTime estimatedDuration expiresAt staffId")
     .lean();
 
   return (
     holds.find((hold) => {
-      // The customer's own current hold is not treated as a conflict.
-      if (
-        customerId &&
-        String(hold.customer) === String(customerId)
-      ) {
+      if (customerId && String(hold.customer) === String(customerId)) {
         return false;
       }
 
@@ -566,81 +482,83 @@ const calculatePaymentDetails = ({
   requestedPaymentOption,
   requestedPaymentMethod,
   paymentConfirmed,
+  appliedCoupon,
 }) => {
-  const total = Number(totalAmount);
+  // originalTotal is the real, undiscounted service value — used for
+  // policy decisions (the mandatory-advance threshold) so a coupon
+  // can never be used to dodge that requirement. The discounted
+  // amount (below) is what's actually charged.
+  const originalTotal = Number(totalAmount);
 
-  if (!Number.isFinite(total) || total <= 0) {
+  if (!Number.isFinite(originalTotal) || originalTotal <= 0) {
     throw new Error("A valid total amount is required");
   }
+
+  let discountAmount = 0;
+
+  if (appliedCoupon) {
+    if (appliedCoupon.discountType === "percentage") {
+      discountAmount = roundMoney(
+        originalTotal * (Number(appliedCoupon.discountValue) / 100)
+      );
+    } else if (appliedCoupon.discountType === "fixed") {
+      discountAmount = Number(appliedCoupon.discountValue);
+    } else {
+      // freeService coupons don't reduce a total automatically —
+      // there's no way to know which selected service should be
+      // "free" without additional UI for the customer to specify
+      // that. For now this type must be honored in person at the
+      // salon rather than applied online; flag it clearly rather
+      // than silently doing nothing while still burning the coupon.
+      throw new Error(
+        "This reward type must be redeemed in person at the salon and can't be applied online yet"
+      );
+    }
+
+    // Never let a discount exceed the booking's own value.
+    discountAmount = Math.min(roundMoney(discountAmount), originalTotal);
+  }
+
+  const total = roundMoney(originalTotal - discountAmount);
 
   const serviceCategory = detectServiceCategory(services, bookingType);
   const isBridal = serviceCategory === "bridal";
 
   const normalizedBookingType = serviceCategory;
 
-  const paymentOption = String(
-    requestedPaymentOption || ""
-  )
-    .trim()
-    .toLowerCase();
+  const paymentOption = String(requestedPaymentOption || "").trim().toLowerCase();
 
   if (!["advance", "full", "salon"].includes(paymentOption)) {
     throw new Error("Invalid payment option");
   }
-   
-  const allowedPaymentMethods = [
-  "Credit/Debit Card",
-  "Stripe",
-  "Pay at Salon",
-];
 
-if (
-  requestedPaymentMethod &&
-  !allowedPaymentMethods.includes(requestedPaymentMethod)
-) {
-  throw new Error("Invalid payment method");
-}
+  const allowedPaymentMethods = ["Credit/Debit Card", "Stripe", "Pay at Salon"];
 
+  if (requestedPaymentMethod && !allowedPaymentMethods.includes(requestedPaymentMethod)) {
+    throw new Error("Invalid payment method");
+  }
 
-  const advanceAvailable =
-    isBridal ||
-    (!isBridal && total >= NON_BRIDAL_ADVANCE_MINIMUM);
+  const advanceAvailable = isBridal || (!isBridal && originalTotal >= NON_BRIDAL_ADVANCE_MINIMUM);
 
-  // Pay at Salon is allowed only for non-bridal totals below LKR 10,000.
-  const payAtSalonAllowed =
-    !isBridal && total < NON_BRIDAL_ADVANCE_MINIMUM;
+  const payAtSalonAllowed = !isBridal && originalTotal < NON_BRIDAL_ADVANCE_MINIMUM;
 
   if (paymentOption === "salon" && !payAtSalonAllowed) {
     if (isBridal) {
-      throw new Error(
-        "Bridal bookings require a 20% advance or full online payment"
-      );
+      throw new Error("Bridal bookings require a 20% advance or full online payment");
     }
 
-    throw new Error(
-      "Bookings of LKR 10,000 or more require a 10% advance or full online payment"
-    );
+    throw new Error("Bookings of LKR 10,000 or more require a 10% advance or full online payment");
   }
 
-  if (
-    paymentOption === "advance" &&
-    !advanceAvailable
-  ) {
+  if (paymentOption === "advance" && !advanceAvailable) {
     throw new Error(
       "The advance option is available only for bridal bookings or non-bridal bookings of LKR 10,000 or more"
     );
   }
 
-  const advanceRate = isBridal
-    ? BRIDAL_ADVANCE_RATE
-    : advanceAvailable
-      ? OTHER_ADVANCE_RATE
-      : 0;
+  const advanceRate = isBridal ? BRIDAL_ADVANCE_RATE : advanceAvailable ? OTHER_ADVANCE_RATE : 0;
 
-  const advancePercentage =
-    paymentOption === "advance"
-      ? Math.round(advanceRate * 100)
-      : 0;
+  const advancePercentage = paymentOption === "advance" ? Math.round(advanceRate * 100) : 0;
 
   let amountPaid = 0;
   let advancePayment = 0;
@@ -650,18 +568,7 @@ if (
   let paymentRequired = false;
   let paymentVerified = false;
 
-  // Fixed: previously "advance" and "full" always saved as
-  // Pending/unpaid/unverified regardless of what actually happened,
-  // because nothing ever told this function whether the online
-  // payment genuinely succeeded. cardPayment.tsx now sends
-  // paymentConfirmed: true only after Stripe's presentPaymentSheet()
-  // returns success — so this only marks a booking as paid when the
-  // client has verified a real successful charge, not automatically
-  // for every advance/full selection. "salon" always stays
-  // Pending/unpaid regardless, since that payment genuinely hasn't
-  // happened yet.
-  const isOnlinePaymentConfirmed =
-    paymentConfirmed === true && paymentOption !== "salon";
+  const isOnlinePaymentConfirmed = paymentConfirmed === true && paymentOption !== "salon";
 
   if (paymentOption === "advance") {
     advancePayment = roundMoney(total * advanceRate);
@@ -692,12 +599,7 @@ if (
     paymentVerified = false;
   }
 
-  if (
-    paymentOption !== "salon" &&
-    ["Credit/Debit Card", "Stripe"].includes(
-      requestedPaymentMethod
-    )
-  ) {
+  if (paymentOption !== "salon" && ["Credit/Debit Card", "Stripe"].includes(requestedPaymentMethod)) {
     paymentMethod = requestedPaymentMethod;
   }
 
@@ -714,6 +616,9 @@ if (
     paymentStatus,
     paymentVerified,
     totalAmount: roundMoney(total),
+    originalAmount: roundMoney(originalTotal),
+    discountAmount,
+    couponCode: appliedCoupon ? appliedCoupon.code : null,
   };
 };
 
@@ -726,10 +631,7 @@ const createBookingHold = async (req, res) => {
     const customerId = getCustomerId(req);
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
     const {
@@ -738,15 +640,18 @@ const createBookingHold = async (req, res) => {
       selectedTime,
       estimatedDuration,
       excludeBookingId,
+      // Bridal-only: when reserving the trial makeup slot, pass the
+      // main event's holdId here (and vice versa when refreshing the
+      // main slot after the trial hold already exists) so the
+      // stale-hold cleanup below doesn't delete the OTHER slot's
+      // still-active hold for this same customer.
+      keepHoldId,
     } = req.body;
 
     const normalizedStaffId = String(staffId || "").trim();
 
     if (!normalizedStaffId) {
-      return res.status(400).json({
-        success: false,
-        message: "Staff ID is required",
-      });
+      return res.status(400).json({ success: false, message: "Staff ID is required" });
     }
 
     const normalizedDate = normalizeBookingDate(selectedDate);
@@ -754,38 +659,25 @@ const createBookingHold = async (req, res) => {
     const duration = Number(estimatedDuration);
 
     if (!Number.isFinite(duration) || duration <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid estimated duration is required",
-      });
+      return res.status(400).json({ success: false, message: "A valid estimated duration is required" });
     }
 
     ensureFutureSlot(normalizedDate, normalizedTime);
 
-    // Remove expired documents immediately instead of waiting for TTL.
-    await BookingHold.deleteMany({
-      expiresAt: {
-        $lte: new Date(),
-      },
-    });
+    await BookingHold.deleteMany({ expiresAt: { $lte: new Date() } });
 
-    const confirmedConflict =
-      await findConfirmedBookingConflict({
-        staffId: normalizedStaffId,
-        selectedDate: normalizedDate,
-        selectedTime: normalizedTime,
-        estimatedDuration: duration,
-        // New: when this hold is being created as part of a
-        // reschedule, the booking being moved should not count as a
-        // conflict against its own current slot.
-        excludeBookingId: excludeBookingId || undefined,
-      });
+    const confirmedConflict = await findConfirmedBookingConflict({
+      staffId: normalizedStaffId,
+      selectedDate: normalizedDate,
+      selectedTime: normalizedTime,
+      estimatedDuration: duration,
+      excludeBookingId: excludeBookingId || undefined,
+    });
 
     if (confirmedConflict) {
       return res.status(409).json({
         success: false,
-        message:
-          "This staff member is already booked during the selected time",
+        message: "This staff member is already booked during the selected time",
       });
     }
 
@@ -800,20 +692,14 @@ const createBookingHold = async (req, res) => {
     if (activeHoldConflict) {
       return res.status(409).json({
         success: false,
-        message:
-          "This time is temporarily reserved by another customer. Please choose another time or staff member.",
+        message: "This time is temporarily reserved by another customer. Please choose another time or staff member.",
       });
     }
 
-    /*
-     * A customer should have only one active hold.
-     * Creating a new one releases their previous hold.
-     */
     await BookingHold.deleteMany({
       customer: customerId,
-      expiresAt:{
-        $gt:new Date()
-      }
+      expiresAt: { $gt: new Date() },
+      ...(keepHoldId ? { _id: { $ne: keepHoldId } } : {}),
     });
 
     const slotKeys = generateSlotKeys({
@@ -823,9 +709,7 @@ const createBookingHold = async (req, res) => {
       estimatedDuration: duration,
     });
 
-    const expiresAt = new Date(
-      Date.now() + HOLD_DURATION_MINUTES * 60 * 1000
-    );
+    const expiresAt = new Date(Date.now() + HOLD_DURATION_MINUTES * 60 * 1000);
 
     let hold;
 
@@ -843,8 +727,7 @@ const createBookingHold = async (req, res) => {
       if (error?.code === 11000) {
         return res.status(409).json({
           success: false,
-          message:
-            "This time was just reserved by another customer. Please select another time or staff member.",
+          message: "This time was just reserved by another customer. Please select another time or staff member.",
         });
       }
 
@@ -869,8 +752,7 @@ const createBookingHold = async (req, res) => {
 
     return res.status(400).json({
       success: false,
-      message:
-        error.message || "Unable to reserve the booking slot",
+      message: error.message || "Unable to reserve the booking slot",
     });
   }
 };
@@ -885,35 +767,20 @@ const cancelBookingHold = async (req, res) => {
     const { holdId } = req.params;
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
-    const deletedHold = await BookingHold.findOneAndDelete({
-      _id: holdId,
-      customer: customerId,
-    });
+    const deletedHold = await BookingHold.findOneAndDelete({ _id: holdId, customer: customerId });
 
     if (!deletedHold) {
-      return res.status(404).json({
-        success: false,
-        message: "Active booking hold not found",
-      });
+      return res.status(404).json({ success: false, message: "Active booking hold not found" });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: "Booking hold released",
-    });
+    return res.status(200).json({ success: true, message: "Booking hold released" });
   } catch (error) {
     console.error("Cancel booking hold error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to release the booking hold",
-    });
+    return res.status(500).json({ success: false, message: "Unable to release the booking hold" });
   }
 };
 
@@ -925,44 +792,26 @@ const getBookingAvailability = async (req, res) => {
   try {
     const customerId = getCustomerId(req);
 
-    const {
-      date,
-      time,
-      duration,
-      staffId,
-      staffIds,
-    } = req.query;
+    const { date, time, duration, staffId, staffIds } = req.query;
 
     const normalizedDate = normalizeBookingDate(date);
     const normalizedTime = normalizeBookingTime(time);
     const estimatedDuration = Number(duration);
 
-    if (
-      !Number.isFinite(estimatedDuration) ||
-      estimatedDuration <= 0
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid duration is required",
-      });
+    if (!Number.isFinite(estimatedDuration) || estimatedDuration <= 0) {
+      return res.status(400).json({ success: false, message: "A valid duration is required" });
     }
 
     let requestedStaffIds = [];
 
     if (staffIds) {
-      requestedStaffIds = String(staffIds)
-        .split(",")
-        .map((id) => id.trim())
-        .filter(Boolean);
+      requestedStaffIds = String(staffIds).split(",").map((id) => id.trim()).filter(Boolean);
     } else if (staffId) {
       requestedStaffIds = [String(staffId).trim()];
     }
 
     if (requestedStaffIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "At least one staff ID is required",
-      });
+      return res.status(400).json({ success: false, message: "At least one staff ID is required" });
     }
 
     let isPast = false;
@@ -986,23 +835,39 @@ const getBookingAvailability = async (req, res) => {
       });
     }
 
-    await BookingHold.deleteMany({
-      expiresAt: {
-        $lte: new Date(),
-      },
-    });
+    await BookingHold.deleteMany({ expiresAt: { $lte: new Date() } });
+
+    // Fixed: the staff member's own "Available for new bookings"
+    // toggle (Staff.available, set via update-availability.tsx on the
+    // staff app) was never actually consulted here — this endpoint
+    // only ever checked for a slot conflict, so switching yourself off
+    // did nothing on the customer side; you'd still show up as
+    // "Available" for every open time slot. Real-world behavior: a
+    // staff member who's toggled themselves off shouldn't be bookable
+    // at all, regardless of what the calendar looks like.
+    const staffDocs = await Staff.find({ _id: { $in: requestedStaffIds } })
+      .select("available")
+      .lean();
+
+    const globallyUnavailable = new Set(
+      staffDocs.filter((s) => s.available === false).map((s) => String(s._id))
+    );
 
     const availableStaffIds = [];
     const unavailableStaffIds = [];
 
     for (const currentStaffId of requestedStaffIds) {
-      const confirmedConflict =
-        await findConfirmedBookingConflict({
-          staffId: currentStaffId,
-          selectedDate: normalizedDate,
-          selectedTime: normalizedTime,
-          estimatedDuration,
-        });
+      if (globallyUnavailable.has(String(currentStaffId))) {
+        unavailableStaffIds.push(currentStaffId);
+        continue;
+      }
+
+      const confirmedConflict = await findConfirmedBookingConflict({
+        staffId: currentStaffId,
+        selectedDate: normalizedDate,
+        selectedTime: normalizedTime,
+        estimatedDuration,
+      });
 
       const holdConflict = await findActiveHoldConflict({
         customerId,
@@ -1034,8 +899,7 @@ const getBookingAvailability = async (req, res) => {
 
     return res.status(400).json({
       success: false,
-      message:
-        error.message || "Unable to check staff availability",
+      message: error.message || "Unable to check staff availability",
     });
   }
 };
@@ -1046,6 +910,7 @@ const getBookingAvailability = async (req, res) => {
 
 const createBooking = async (req, res) => {
   let consumedHold = null;
+  let consumedTrialHold = null;
 
   try {
     const {
@@ -1061,34 +926,31 @@ const createBooking = async (req, res) => {
       paymentMethod,
       paymentIntentId,
       paymentConfirmed,
+      couponCode,
+      wantsTrialMakeup,
+      trialMakeupDate,
+      trialMakeupTime,
+      trialHoldId,
+      notes,
     } = req.body;
 
     const customerId = getCustomerId(req);
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
     if (!holdId) {
       return res.status(400).json({
         success: false,
-        message:
-          "A valid temporary booking hold is required before confirming the booking",
+        message: "A valid temporary booking hold is required before confirming the booking",
       });
     }
 
-    const selectedStaffId = String(
-      staff?.staffId || staff?._id || ""
-    ).trim();
+    const selectedStaffId = String(staff?.staffId || staff?._id || "").trim();
 
     if (!selectedStaffId) {
-      return res.status(400).json({
-        success: false,
-        message: "Please select a staff member",
-      });
+      return res.status(400).json({ success: false, message: "Please select a staff member" });
     }
 
     const normalizedDate = normalizeBookingDate(selectedDate);
@@ -1100,20 +962,18 @@ const createBooking = async (req, res) => {
     const hold = await BookingHold.findOne({
       _id: holdId,
       customer: customerId,
-      expiresAt: {
-        $gt: new Date(),
-      },
+      expiresAt: { $gt: new Date() },
     });
 
     if (!hold) {
       return res.status(409).json({
         success: false,
-        message:
-          "Your temporary booking hold has expired. Please select the time again.",
+        message: "Your temporary booking hold has expired. Please select the time again.",
       });
     }
 
-    const holdMatchesRequest = String (hold.staffId) === String (selectedStaffId) &&
+    const holdMatchesRequest =
+      String(hold.staffId) === String(selectedStaffId) &&
       hold.selectedDate === normalizedDate &&
       normalizeBookingTime(hold.selectedTime) === normalizedTime &&
       Number(hold.estimatedDuration) === Number(estimatedDuration);
@@ -1121,9 +981,32 @@ const createBooking = async (req, res) => {
     if (!holdMatchesRequest) {
       return res.status(400).json({
         success: false,
-        message:
-          "The selected booking details do not match the reserved slot",
+        message: "The selected booking details do not match the reserved slot",
       });
+    }
+
+    let appliedCoupon = null;
+
+    if (couponCode) {
+      appliedCoupon = await ClaimedReward.findOne({
+        code: String(couponCode).trim().toUpperCase(),
+        customer: customerId,
+        redeemedAt: null,
+      });
+
+      if (!appliedCoupon) {
+        return res.status(400).json({
+          success: false,
+          message: "This coupon code is invalid or has already been used",
+        });
+      }
+
+      if (appliedCoupon.expiresAt && appliedCoupon.expiresAt.getTime() < Date.now()) {
+        return res.status(400).json({
+          success: false,
+          message: "This coupon code has expired",
+        });
+      }
     }
 
     let paymentDetails;
@@ -1136,62 +1019,97 @@ const createBooking = async (req, res) => {
         requestedPaymentOption: paymentOption,
         requestedPaymentMethod: paymentMethod,
         paymentConfirmed,
+        appliedCoupon,
       });
     } catch (error) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
+      return res.status(400).json({ success: false, message: error.message });
     }
 
-    const confirmedConflict =
-      await findConfirmedBookingConflict({
-        staffId: selectedStaffId,
-        selectedDate: normalizedDate,
-        selectedTime: normalizedTime,
-        estimatedDuration,
-      });
+    const confirmedConflict = await findConfirmedBookingConflict({
+      staffId: selectedStaffId,
+      selectedDate: normalizedDate,
+      selectedTime: normalizedTime,
+      estimatedDuration,
+    });
 
     if (confirmedConflict) {
       return res.status(409).json({
         success: false,
-        message:
-          "This staff member is no longer available for the selected time",
+        message: "This staff member is no longer available for the selected time",
       });
     }
 
-    
-
-    /*
-     * Atomically consume the hold.
-     * If two identical confirmation requests arrive together,
-     * only one request can successfully delete and use the hold.
-     */
     consumedHold = await BookingHold.findOneAndDelete({
       _id: holdId,
       customer: customerId,
-      expiresAt: {
-        $gt: new Date(),
-      },
+      expiresAt: { $gt: new Date() },
     });
 
     if (!consumedHold) {
       return res.status(409).json({
         success: false,
-        message:
-          "The booking slot is no longer reserved. Please select it again.",
+        message: "The booking slot is no longer reserved. Please select it again.",
       });
     }
 
-    const isOnlinePayment =
-      paymentDetails.paymentOption !== "salon";
+    // Bridal-only: the trial makeup session is a second appointment
+    // for the same staff member, protected by the exact same
+    // hold-then-consume machinery as the main event slot above — so a
+    // staff member can't end up double-booked for a trial either.
+    const wantsTrial = Boolean(wantsTrialMakeup);
+    const normalizedTrialDate =
+      wantsTrial && trialMakeupDate ? normalizeBookingDate(trialMakeupDate) : "";
+    const normalizedTrialTime =
+      wantsTrial && trialMakeupTime ? normalizeBookingTime(trialMakeupTime) : "";
+
+    if (wantsTrial && normalizedTrialDate && normalizedTrialTime) {
+      ensureFutureSlot(normalizedTrialDate, normalizedTrialTime);
+
+      if (!trialHoldId) {
+        const missingTrialHoldError = new Error(
+          "A valid temporary hold on your trial makeup slot is required before confirming the booking"
+        );
+        missingTrialHoldError.statusCode = 400;
+        throw missingTrialHoldError;
+      }
+
+      const trialConflict = await findConfirmedBookingConflict({
+        staffId: selectedStaffId,
+        selectedDate: normalizedTrialDate,
+        selectedTime: normalizedTrialTime,
+        estimatedDuration: TRIAL_MAKEUP_DURATION_MINUTES,
+      });
+
+      if (trialConflict) {
+        const trialConflictError = new Error(
+          "This staff member is no longer available for the selected trial makeup time"
+        );
+        trialConflictError.statusCode = 409;
+        throw trialConflictError;
+      }
+
+      consumedTrialHold = await BookingHold.findOneAndDelete({
+        _id: trialHoldId,
+        customer: customerId,
+        staffId: selectedStaffId,
+        selectedDate: normalizedTrialDate,
+        selectedTime: normalizedTrialTime,
+        expiresAt: { $gt: new Date() },
+      });
+
+      if (!consumedTrialHold) {
+        const trialHoldGoneError = new Error(
+          "Your trial makeup slot is no longer reserved. Please select it again."
+        );
+        trialHoldGoneError.statusCode = 409;
+        throw trialHoldGoneError;
+      }
+    }
+
+    const isOnlinePayment = paymentDetails.paymentOption !== "salon";
 
     const transactionReference = isOnlinePayment
-      ? `SIM-${crypto
-          .randomUUID()
-          .replace(/-/g, "")
-          .slice(0, 16)
-          .toUpperCase()}`
+      ? `SIM-${crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`
       : null;
 
     const booking = await Booking.create({
@@ -1217,12 +1135,14 @@ const createBooking = async (req, res) => {
 
       bookingType: paymentDetails.bookingType,
       totalAmount: paymentDetails.totalAmount,
+      originalAmount: paymentDetails.originalAmount,
+      discountAmount: paymentDetails.discountAmount,
+      couponCode: paymentDetails.couponCode,
 
       paymentOption: paymentDetails.paymentOption,
       paymentMethod: paymentDetails.paymentMethod,
 
-      advancePercentage:
-        paymentDetails.advancePercentage,
+      advancePercentage: paymentDetails.advancePercentage,
 
       advancePayment: paymentDetails.advancePayment,
       amountPaid: paymentDetails.amountPaid,
@@ -1232,19 +1152,56 @@ const createBooking = async (req, res) => {
       paymentStatus: paymentDetails.paymentStatus,
       paymentVerified: paymentDetails.paymentVerified,
 
-      paymentVerifiedAt: paymentDetails.paymentVerified
-        ? new Date()
-        : null,
+      paymentVerifiedAt: paymentDetails.paymentVerified ? new Date() : null,
 
       stripePaymentIntentId: paymentIntentId || null,
       transactionReference,
-      status: "Confirmed",
+      // Real-world flow (per product decision): a new booking starts
+      // as Pending, not auto-Confirmed — the staff member it's
+      // assigned to has to explicitly confirm or decline it before
+      // it's a real commitment. See staffScheduleController.js's
+      // updateBookingStatus for the confirm/decline/complete rules.
+      status: "Pending",
+
+      // Bridal-only trial makeup add-on. Harmless defaults for every
+      // other booking type, since those screens are never visited and
+      // these arrive undefined/false in req.body.
+      wantsTrialMakeup: Boolean(wantsTrialMakeup),
+      trialMakeupDate: trialMakeupDate ? String(trialMakeupDate) : "",
+      trialMakeupTime: trialMakeupTime ? String(trialMakeupTime) : "",
+      notes: notes ? String(notes).trim().slice(0, 200) : "",
     });
 
-    
-    // New: send a booking confirmation email. Wrapped internally so
-    // any email failure can't affect this response.
+    // Mark the coupon redeemed only now that the booking genuinely
+    // exists — if anything above had failed, the coupon must remain
+    // usable, not get silently burned for nothing.
+    if (appliedCoupon) {
+      appliedCoupon.redeemedAt = new Date();
+      appliedCoupon.redeemedOnBooking = booking._id;
+      await appliedCoupon.save();
+    }
+
     await sendBookingEmail({ customerId, booking });
+
+    await createNotification({
+      customerId,
+      type: "booking_pending",
+      title: "Booking Requested",
+      message: `Your booking request for ${booking.selectedDate} at ${booking.selectedTime} has been sent and is waiting for staff confirmation.`,
+      relatedBooking: booking._id,
+    });
+
+    if (booking.staff?.staffId) {
+      const serviceNames = (booking.services || []).map((s) => s.name).filter(Boolean).join(", ");
+
+      await createNotification({
+        staffId: booking.staff.staffId,
+        type: "new_booking",
+        title: "New Booking Request",
+        message: `${serviceNames || "A new appointment"} requested for ${booking.selectedDate} at ${booking.selectedTime}. Please confirm or decline.`,
+        relatedBooking: booking._id,
+      });
+    }
 
     return res.status(201).json({
       success: true,
@@ -1257,6 +1214,9 @@ const createBooking = async (req, res) => {
         paymentMethod: booking.paymentMethod,
         advancePercentage: booking.advancePercentage,
         totalAmount: booking.totalAmount,
+        originalAmount: booking.originalAmount,
+        discountAmount: booking.discountAmount,
+        couponCode: booking.couponCode,
         amountPaid: booking.amountPaid,
         balancePayment: booking.balancePayment,
         paymentStatus: booking.paymentStatus,
@@ -1266,14 +1226,7 @@ const createBooking = async (req, res) => {
   } catch (error) {
     console.error("Booking creation error:", error);
 
-    /*
-     * Restore the consumed hold when booking creation unexpectedly fails
-     * and the original expiry time has not yet passed.
-     */
-    if (
-      consumedHold &&
-      consumedHold.expiresAt.getTime() > Date.now()
-    ) {
+    if (consumedHold && consumedHold.expiresAt.getTime() > Date.now()) {
       try {
         await BookingHold.create({
           customer: consumedHold.customer,
@@ -1285,18 +1238,37 @@ const createBooking = async (req, res) => {
           expiresAt: consumedHold.expiresAt,
         });
       } catch (restoreError) {
-        console.error(
-          "Unable to restore booking hold:",
-          restoreError
-        );
+        console.error("Unable to restore booking hold:", restoreError);
+      }
+    }
+
+    if (consumedTrialHold && consumedTrialHold.expiresAt.getTime() > Date.now()) {
+      try {
+        await BookingHold.create({
+          customer: consumedTrialHold.customer,
+          staffId: consumedTrialHold.staffId,
+          selectedDate: consumedTrialHold.selectedDate,
+          selectedTime: consumedTrialHold.selectedTime,
+          estimatedDuration: consumedTrialHold.estimatedDuration,
+          slotKeys: consumedTrialHold.slotKeys,
+          expiresAt: consumedTrialHold.expiresAt,
+        });
+      } catch (restoreError) {
+        console.error("Unable to restore trial makeup hold:", restoreError);
       }
     }
 
     if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
-        message:
-          "This booking slot is already reserved or booked",
+        message: "This booking slot is already reserved or booked",
+      });
+    }
+
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
       });
     }
 
@@ -1312,24 +1284,31 @@ const createBooking = async (req, res) => {
 /*                    Get the logged-in customer's bookings                   */
 /* -------------------------------------------------------------------------- */
 
-// New: needed so the Bookings screen has a real data source. Returns
-// everything for this customer, newest first; each booking gets an
-// isPast flag computed from its date+time so the app can split them
-// into Upcoming/Past tabs.
 const getMyBookings = async (req, res) => {
   try {
     const customerId = getCustomerId(req);
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
     const bookings = await Booking.find({ customer: customerId })
       .sort({ selectedDate: -1, createdAt: -1 })
       .lean();
+
+    // Batch-fetch this customer's own reviews for these bookings in one
+    // query, so bookings.tsx can tell "Leave Feedback" (no review yet)
+    // apart from "View Your Feedback" (already reviewed) without a
+    // second round trip per card.
+    const reviews = await Review.find({
+      booking: { $in: bookings.map((b) => b._id) },
+    })
+      .select("booking rating comment")
+      .lean();
+
+    const reviewByBookingId = new Map(
+      reviews.map((r) => [String(r.booking), { rating: r.rating, comment: r.comment }])
+    );
 
     const now = Date.now();
 
@@ -1337,10 +1316,7 @@ const getMyBookings = async (req, res) => {
       let isPast = true;
 
       try {
-        const bookingDateTime = getBookingDateTime(
-          booking.selectedDate,
-          booking.selectedTime
-        );
+        const bookingDateTime = getBookingDateTime(booking.selectedDate, booking.selectedTime);
         isPast = bookingDateTime.getTime() <= now;
       } catch (parseError) {
         console.error(
@@ -1353,29 +1329,36 @@ const getMyBookings = async (req, res) => {
         isPast = true;
       }
 
-      if (booking.status === "Cancelled") {
+      // Cancelled is always "done"; Completed is too, even when a
+      // staff member marks it done ahead of the actual scheduled time
+      // (isPast otherwise stays false until that time passes, which
+      // was hiding same-day completed appointments from the Past tab
+      // here).
+      if (booking.status === "Cancelled" || booking.status === "Completed") {
         isPast = true;
       }
 
+      // Renamed from "Awaiting Confirmation" — that label now belongs
+      // to the real Pending status (a new request the salon hasn't
+      // confirmed or declined yet). This is a different moment: a
+      // CONFIRMED appointment whose time has passed but the staff
+      // member hasn't marked it Completed yet.
       const effectiveStatus =
-        booking.status === "Confirmed" && isPast
-          ? "Awaiting Confirmation"
-          : booking.status;
+        booking.status === "Confirmed" && isPast ? "Awaiting Completion" : booking.status;
 
-      return { ...booking, isPast, effectiveStatus };
+      return {
+        ...booking,
+        isPast,
+        effectiveStatus,
+        review: reviewByBookingId.get(String(booking._id)) || null,
+      };
     });
 
-    return res.status(200).json({
-      success: true,
-      bookings: withComputedTiming,
-    });
+    return res.status(200).json({ success: true, bookings: withComputedTiming });
   } catch (error) {
     console.error("Get my bookings error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to load bookings",
-    });
+    return res.status(500).json({ success: false, message: "Unable to load bookings" });
   }
 };
 
@@ -1383,63 +1366,55 @@ const getMyBookings = async (req, res) => {
 /*                    Cancel an already-confirmed booking                     */
 /* -------------------------------------------------------------------------- */
 
-// New: separate from cancelBookingHold above, which only releases a
-// temporary hold before a booking exists. This cancels a booking that
-// has already been confirmed and saved — what the Bookings screen's
-// "Cancel" button needs.
 const cancelBooking = async (req, res) => {
   try {
     const customerId = getCustomerId(req);
     const { bookingId } = req.params;
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      customer: customerId,
-    });
+    const booking = await Booking.findOne({ _id: bookingId, customer: customerId });
 
     if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: "Booking not found",
-      });
+      return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
     if (booking.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "This booking has already been cancelled",
-      });
+      return res.status(400).json({ success: false, message: "This booking has already been cancelled" });
     }
 
     if (booking.status === "Completed") {
-      return res.status(400).json({
-        success: false,
-        message: "Completed bookings cannot be cancelled",
-      });
+      return res.status(400).json({ success: false, message: "Completed bookings cannot be cancelled" });
     }
 
     booking.status = "Cancelled";
     await booking.save();
 
-    return res.status(200).json({
-      success: true,
-      message: "Booking cancelled",
-      booking,
+    await createNotification({
+      customerId,
+      type: "booking_cancelled",
+      title: "Booking Cancelled",
+      message: `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} has been cancelled.`,
+      relatedBooking: booking._id,
     });
+
+    if (booking.staff?.staffId) {
+      await createNotification({
+        staffId: booking.staff.staffId,
+        type: "booking_cancelled_by_customer",
+        title: "Booking Cancelled",
+        message: `The appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the customer.`,
+        relatedBooking: booking._id,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: "Booking cancelled", booking });
   } catch (error) {
     console.error("Cancel booking error:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to cancel the booking",
-    });
+    return res.status(500).json({ success: false, message: "Unable to cancel the booking" });
   }
 };
 
@@ -1447,66 +1422,52 @@ const cancelBooking = async (req, res) => {
 /*                         Reschedule an existing booking                     */
 /* -------------------------------------------------------------------------- */
 
-// New: reuses the same hold system as the original booking flow.
-// Expected client flow:
-//   1. Customer picks a new date/time for the SAME staff member
-//      (staff and services stay the same — only date/time change).
-//   2. Client calls POST /hold (createBookingHold, already existing)
-//      with that staffId/date/time/duration to temporarily reserve it,
-//      passing excludeBookingId so it never conflicts with its own
-//      current slot.
-//   3. Client calls this endpoint with { holdId } to atomically move
-//      the existing booking to the held slot.
 const rescheduleBooking = async (req, res) => {
   let consumedHold = null;
 
   try {
     const customerId = getCustomerId(req);
     const { bookingId } = req.params;
-    const { holdId } = req.body;
+    // holdId reschedules the main event slot; trialHoldId (bridal
+    // only) reschedules the trial makeup slot instead. Exactly one is
+    // expected per request — the mobile app always sends just the one
+    // that matches whichever "Choose New Time" button the customer
+    // used, on reschedule.tsx's bridal branch.
+    const { holdId, trialHoldId } = req.body;
+    const isTrialReschedule = !holdId && Boolean(trialHoldId);
+    const activeHoldId = isTrialReschedule ? trialHoldId : holdId;
 
     if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
     }
 
-    if (!holdId) {
-      return res.status(400).json({
-        success: false,
-        message: "A valid temporary hold on the new time is required",
-      });
+    if (!activeHoldId) {
+      return res.status(400).json({ success: false, message: "A valid temporary hold on the new time is required" });
     }
 
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      customer: customerId,
-    });
+    const booking = await Booking.findOne({ _id: bookingId, customer: customerId });
 
     if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: "Booking not found",
-      });
+      return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
     if (booking.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled bookings cannot be rescheduled",
-      });
+      return res.status(400).json({ success: false, message: "Cancelled bookings cannot be rescheduled" });
     }
 
     if (booking.status === "Completed") {
+      return res.status(400).json({ success: false, message: "Completed bookings cannot be rescheduled" });
+    }
+
+    if (isTrialReschedule && !booking.wantsTrialMakeup) {
       return res.status(400).json({
         success: false,
-        message: "Completed bookings cannot be rescheduled",
+        message: "This booking doesn't have a trial makeup session to reschedule",
       });
     }
 
     const hold = await BookingHold.findOne({
-      _id: holdId,
+      _id: activeHoldId,
       customer: customerId,
       expiresAt: { $gt: new Date() },
     });
@@ -1525,25 +1486,6 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    // New: block "rescheduling" to the exact same date/time the
-    // booking already has. The booking being moved is deliberately
-    // excluded from the conflict search below (so it doesn't block
-    // against its own current slot) — but that means picking the
-    // identical slot again would otherwise find zero conflicts and
-    // silently "succeed", adding a pointless reschedule history entry
-    // and mislabeling an unchanged booking as "Rescheduled".
-    if (
-      hold.selectedDate === booking.selectedDate &&
-      normalizeBookingTime(hold.selectedTime) ===
-        normalizeBookingTime(booking.selectedTime)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "This is already your current appointment time. Please choose a different date or time.",
-      });
-    }
-
     const confirmedConflict = await findConfirmedBookingConflict({
       staffId: booking.staff.staffId,
       selectedDate: hold.selectedDate,
@@ -1559,8 +1501,26 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
+    // A trial has to stay before the actual event — mirrors the
+    // client-side cap trialMakeupDate.tsx already enforces when
+    // picking the date, checked again here since this is the last
+    // point before the change is actually committed.
+    if (isTrialReschedule && booking.selectedDate && hold.selectedDate >= booking.selectedDate) {
+      return res.status(400).json({
+        success: false,
+        message: "The trial makeup date must be before the event date",
+      });
+    }
+
+    if (!isTrialReschedule && booking.wantsTrialMakeup && booking.trialMakeupDate && hold.selectedDate <= booking.trialMakeupDate) {
+      return res.status(400).json({
+        success: false,
+        message: "The event date must be after the trial makeup date",
+      });
+    }
+
     consumedHold = await BookingHold.findOneAndDelete({
-      _id: holdId,
+      _id: activeHoldId,
       customer: customerId,
       expiresAt: { $gt: new Date() },
     });
@@ -1572,27 +1532,27 @@ const rescheduleBooking = async (req, res) => {
       });
     }
 
-    // New: keep a record of what this booking's date/time was before
-    // this reschedule, for dispute resolution / support / policy
-    // enforcement later. Purely additive — an array that only ever
-    // gets appended to, never mutated.
-    const previousDate = booking.selectedDate;
-    const previousTime = booking.selectedTime;
+    const previousDate = isTrialReschedule ? booking.trialMakeupDate : booking.selectedDate;
+    const previousTime = isTrialReschedule ? booking.trialMakeupTime : booking.selectedTime;
 
     booking.rescheduleHistory = booking.rescheduleHistory || [];
     booking.rescheduleHistory.push({
-      previousDate: booking.selectedDate,
-      previousTime: booking.selectedTime,
+      previousDate,
+      previousTime,
+      kind: isTrialReschedule ? "trial" : "event",
       rescheduledAt: new Date(),
     });
 
-    booking.selectedDate = consumedHold.selectedDate;
-    booking.selectedTime = consumedHold.selectedTime;
+    if (isTrialReschedule) {
+      booking.trialMakeupDate = consumedHold.selectedDate;
+      booking.trialMakeupTime = consumedHold.selectedTime;
+    } else {
+      booking.selectedDate = consumedHold.selectedDate;
+      booking.selectedTime = consumedHold.selectedTime;
+    }
+
     await booking.save();
 
-    // New: send a reschedule notification email with the old and new
-    // times. Wrapped internally so any email failure can't affect
-    // this response.
     await sendBookingEmail({
       customerId,
       booking,
@@ -1600,6 +1560,28 @@ const rescheduleBooking = async (req, res) => {
       previousDate,
       previousTime,
     });
+
+    await createNotification({
+      customerId,
+      type: "booking_rescheduled",
+      title: "Booking Rescheduled",
+      message: isTrialReschedule
+        ? `Your trial makeup was moved to ${booking.trialMakeupDate} at ${booking.trialMakeupTime}.`
+        : `Your appointment was moved to ${booking.selectedDate} at ${booking.selectedTime}.`,
+      relatedBooking: booking._id,
+    });
+
+    if (booking.staff?.staffId) {
+      await createNotification({
+        staffId: booking.staff.staffId,
+        type: "booking_rescheduled_by_customer",
+        title: "Booking Rescheduled",
+        message: isTrialReschedule
+          ? `A customer moved their trial makeup to ${booking.trialMakeupDate} at ${booking.trialMakeupTime}.`
+          : `A customer moved their appointment to ${booking.selectedDate} at ${booking.selectedTime}.`,
+        relatedBooking: booking._id,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -1625,10 +1607,7 @@ const rescheduleBooking = async (req, res) => {
       }
     }
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to reschedule the booking",
-    });
+    return res.status(500).json({ success: false, message: "Unable to reschedule the booking" });
   }
 };
 
@@ -1640,4 +1619,5 @@ module.exports = {
   getMyBookings,
   cancelBooking,
   rescheduleBooking,
+  getBookingDateTime,
 };

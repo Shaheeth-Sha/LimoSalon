@@ -13,6 +13,10 @@ const {
 } = require("../controllers/bookingController");
 
 const {
+  createOrUpdateReview,
+} = require("../controllers/reviewController");
+
+const {
   protectCustomer,
 } = require("../middleware/authMiddleware");
 
@@ -61,5 +65,14 @@ router.patch(
      protectCustomer,
      rescheduleBooking
    );
+
+// New: customer leaves (or edits) a review for a Completed booking —
+// upsert, so this same endpoint backs both "Leave Feedback" and
+// "View/Edit Your Feedback" in bookings.tsx.
+router.post(
+  "/:bookingId/review",
+  protectCustomer,
+  createOrUpdateReview
+);
 
 module.exports = router;
