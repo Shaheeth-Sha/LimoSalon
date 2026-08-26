@@ -15,6 +15,7 @@ type Booking = {
   _id: string;
   services: ServiceItem[];
   hairLength?: { name?: string };
+  bookingType?: string;
   staff: { name: string; role?: string };
   selectedDate: string;
   selectedTime: string;
@@ -116,7 +117,14 @@ export default function BookingDetails() {
           {booking.hairLength?.name ? (
             <>
               <View style={styles.divider} />
-              <Row label="Hair Length" value={booking.hairLength.name} />
+              <Row
+                label={
+                  booking.bookingType?.toLowerCase() === "nail"
+                    ? "Nail Style"
+                    : "Hair Length"
+                }
+                value={booking.hairLength.name}
+              />
             </>
           ) : null}
 

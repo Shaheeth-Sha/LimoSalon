@@ -23,7 +23,7 @@ import {
 
 
 // Backend API
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 
 const SERVICE_API =
   `${BASE_URL}/api/services?category=Body`;

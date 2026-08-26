@@ -88,6 +88,7 @@ export default function BookingSuccess() {
     selectedDate,
     selectedTime,
     selectedStaff,
+    bookingType,
     totalAmount,
     advancePayment,
     amountPaid,
@@ -97,6 +98,9 @@ export default function BookingSuccess() {
     paymentMethod,
     paymentStatus,
     transactionReference,
+    wantsTrialMakeup,
+    trialMakeupDate,
+    trialMakeupTime,
   } = useLocalSearchParams();
 
   const services = safeJsonParse<any[]>(
@@ -108,6 +112,10 @@ export default function BookingSuccess() {
     selectedLength,
     null
   );
+
+  const bookingTypeText = getParamValue(bookingType);
+  const nailLengthLabel =
+    bookingTypeText.toLowerCase() === "nail" ? "Nail Style" : "Hair Length";
 
   const staff = safeJsonParse<any | null>(
     selectedStaff,
@@ -155,6 +163,18 @@ export default function BookingSuccess() {
 
   const formatDate = rawDate
     ? new Date(rawDate).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : "-";
+
+  const wantsTrialMakeupBool = getParamValue(wantsTrialMakeup) === "true";
+  const trialMakeupDateText = getParamValue(trialMakeupDate);
+  const trialMakeupTimeText = getParamValue(trialMakeupTime);
+
+  const formatTrialDate = trialMakeupDateText
+    ? new Date(trialMakeupDateText).toLocaleDateString("en-US", {
         year: "numeric",
         month: "short",
         day: "numeric",
@@ -256,25 +276,33 @@ export default function BookingSuccess() {
           { transform: [{ scale: iconScale }] },
         ]}
       >
+        {/* Fixed: bookings now start as Pending, not auto-Confirmed —
+            the assigned staff member has to actually accept the
+            request first (see Booking.js / staffScheduleController.js).
+            This screen was claiming "Booking Confirmed" the instant a
+            request was submitted, before any staff review happened at
+            all. Icon and copy now reflect "request sent," not "done
+            deal." */}
         <Animated.View style={{ opacity: checkOpacity }}>
           <Ionicons
-            name="checkmark"
-            size={72}
+            name="hourglass-outline"
+            size={64}
             color="#000"
           />
         </Animated.View>
       </Animated.View>
 
       <Text style={styles.title}>
-        Booking Confirmed
+        Booking Requested
       </Text>
 
       <Text style={styles.subTitle}>
-        See you soon!
+        Waiting for the salon to confirm
       </Text>
 
       <Text style={styles.message}>
-        Thank you for choosing LimoSalon.
+        Thank you for choosing LimoSalon. We'll notify you as soon as your appointment is
+        confirmed.
       </Text>
 
       <Animated.View
@@ -306,7 +334,7 @@ export default function BookingSuccess() {
 
         {hairLength?.name ? (
           <DetailRow
-            label="Hair Length"
+            label={nailLengthLabel}
             value={hairLength.name}
           />
         ) : null}
@@ -330,6 +358,20 @@ export default function BookingSuccess() {
             "Any Available Staff"
           }
         />
+
+        {wantsTrialMakeupBool ? (
+          <>
+            <DetailRow
+              label="Trial Date"
+              value={formatTrialDate}
+            />
+
+            <DetailRow
+              label="Trial Time"
+              value={trialMakeupTimeText || "-"}
+            />
+          </>
+        ) : null}
 
         <View style={styles.sectionDivider} />
 

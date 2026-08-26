@@ -10,7 +10,7 @@ import { Ionicons, Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 const RESCHEDULE_API = (bookingId: string) =>
   `${BASE_URL}/api/bookings/${bookingId}/reschedule`;
 
@@ -38,14 +38,22 @@ const formatDate = (dateStr: string) => {
 
 export default function RescheduleConfirm() {
   const router = useRouter();
-  const { bookingId, serviceName, selectedDate, selectedTime, holdId } =
+  const { bookingId, serviceName, selectedDate, selectedTime, holdId, trialHoldId, kind } =
     useLocalSearchParams<{
       bookingId: string;
       serviceName: string;
       selectedDate: string;
       selectedTime: string;
       holdId: string;
+      trialHoldId: string;
+      // "trial" when arriving from trialMakeupTime.tsx's reschedule
+      // path (see reschedule.tsx's "Change Trial Date & Time"
+      // button); absent/anything else means the main event slot,
+      // matching every existing caller unchanged.
+      kind: string;
     }>();
+
+  const isTrial = kind === "trial";
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -74,7 +82,7 @@ export default function RescheduleConfirm() {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ holdId }),
+        body: JSON.stringify(isTrial ? { trialHoldId } : { holdId }),
       });
 
       const data = await res.json();
@@ -86,7 +94,9 @@ export default function RescheduleConfirm() {
       setAlert({
         visible: true,
         title: "Booking Rescheduled",
-        message: "Your appointment has been moved to the new date and time.",
+        message: isTrial
+          ? "Your trial makeup has been moved to the new date and time."
+          : "Your appointment has been moved to the new date and time.",
         onOk: () => router.replace("/(customer)/(tabs)/bookings"),
       });
     } catch (error: any) {
@@ -106,11 +116,15 @@ export default function RescheduleConfirm() {
         <TouchableOpacity onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerText}>Confirm New Time</Text>
+        <Text style={styles.headerText}>
+          {isTrial ? "Confirm New Trial Time" : "Confirm New Time"}
+        </Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardLabel}>New Appointment</Text>
+        <Text style={styles.cardLabel}>
+          {isTrial ? "New Trial Appointment" : "New Appointment"}
+        </Text>
         <Text style={styles.serviceName}>{serviceName}</Text>
 
         <View style={styles.row}>

@@ -1,8 +1,9 @@
 import { useState, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { resolveAvatarUrl } from "../../../utils/resolveAvatarUrl";
 
 interface CustomerData {
   id: string;
@@ -12,6 +13,7 @@ interface CustomerData {
   phoneVerified: boolean;
   emailVerified: boolean;
   authProvider?: "local" | "google";
+  avatar?: string;
 }
 
 export default function Profile() {
@@ -92,8 +94,21 @@ export default function Profile() {
       </View>
 
       {/* Avatar */}
-      <View style={styles.avatar}>
-        <Text style={styles.avatarInitials}>{getInitials(customer.name)}</Text>
+      <View style={styles.avatarContainer}>
+        <View style={styles.avatar}>
+          {resolveAvatarUrl(customer.avatar) ? (
+            <Image source={{ uri: resolveAvatarUrl(customer.avatar)! }} style={styles.avatarImage} />
+          ) : (
+            <Text style={styles.avatarInitials}>{getInitials(customer.name)}</Text>
+          )}
+        </View>
+        <TouchableOpacity
+          style={styles.editIcon}
+          activeOpacity={0.8}
+          onPress={() => router.push("/(customer)/(services)/editProfilePhoto")}
+        >
+          <Ionicons name="pencil" size={14} color="#FFF" />
+        </TouchableOpacity>
       </View>
 
       {/* Name + Email */}
@@ -174,21 +189,39 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
+  avatarContainer: {
+    alignSelf: "center",
+    marginBottom: 10,
+  },
+
   avatar: {
     backgroundColor: "#f5b6c6",
     width: 90,
     height: 90,
     borderRadius: 45,
-    alignSelf: "center",
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 10,
+    overflow: "hidden",
+  },
+
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
 
   avatarInitials: {
     fontSize: 28,
     fontWeight: "700",
     color: "#7a1f33",
+  },
+
+  editIcon: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "#000",
+    padding: 6,
+    borderRadius: 12,
   },
 
   name: {

@@ -11,12 +11,16 @@ import {
 import { useEffect, useState } from "react";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useIsFocused } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
+import { groupBookingsByDate } from "../../../utils/groupBookingsByDate";
 const MY_BOOKINGS_API = `${BASE_URL}/api/bookings/my-bookings`;
 const CANCEL_BOOKING_API = (bookingId: string) =>
   `${BASE_URL}/api/bookings/${bookingId}/cancel`;
+const REVIEW_API = (bookingId: string) =>
+  `${BASE_URL}/api/bookings/${bookingId}/review`;
 
 type Booking = {
   _id: string;
@@ -31,6 +35,11 @@ type Booking = {
   paymentStatus: string;
   isPast: boolean;
   rescheduleHistory?: { previousDate: string; previousTime: string; rescheduledAt: string }[];
+  bookingType?: string;
+  wantsTrialMakeup?: boolean;
+  trialMakeupDate?: string;
+  trialMakeupTime?: string;
+  review?: { rating: number; comment: string } | null;
 };
 
 type AlertState = {
@@ -42,6 +51,7 @@ type AlertState = {
 export default function Bookings() {
   const [activeTab, setActiveTab] = useState<"upcoming" | "past">("upcoming");
   const router = useRouter();
+  const isFocused = useIsFocused();
 
   const [loading, setLoading] = useState(true);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -61,19 +71,30 @@ export default function Bookings() {
 
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
 
-  // Feedback is tracked locally per booking id, since there's
-  // no feedback backend yet. This is a demo-only simulation — it won't
-  // survive an app restart. Map of bookingId -> feedback text.
-  const [feedbackByBookingId, setFeedbackByBookingId] = useState<Record<string, string>>({});
+  // Real reviews now — each booking carries its own `review` (rating +
+  // comment) straight from getMyBookings, so there's no separate local
+  // cache to keep in sync; submitting just updates that booking's
+  // `review` field in `bookings` state below.
   const [feedbackModal, setFeedbackModal] = useState<{
     mode: "write" | "view";
     bookingId: string | null;
+    rating: number;
     text: string;
-  }>({ mode: "write", bookingId: null, text: "" });
+  }>({ mode: "write", bookingId: null, rating: 0, text: "" });
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
 
+  // Fixed: this screen only ever fetched once on mount, so once staff
+  // confirmed/completed/cancelled a booking elsewhere, a customer who
+  // already had this tab open (or navigated back to it) kept seeing
+  // the stale status — e.g. "Pending" long after staff had confirmed
+  // it. Same useIsFocused pattern already used on the staff side
+  // (Today's Jobs, My Schedule) — refetch every time this screen
+  // regains focus, not just the first time it mounts.
   useEffect(() => {
-    loadBookings();
-  }, []);
+    if (isFocused) {
+      loadBookings();
+    }
+  }, [isFocused]);
 
   const loadBookings = async () => {
     try {
@@ -150,6 +171,23 @@ export default function Bookings() {
     }
   };
 
+  // Converts a normalized time like "10:00 am" into minutes since
+  // midnight — used only to order same-day bookings correctly, since
+  // selectedTime is stored as text and won't sort right as a string.
+  const timeToMinutes = (time: string) => {
+    const match = (time || "").match(/^(\d{1,2}):(\d{2})\s*(am|pm)$/i);
+    if (!match) return 0;
+
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const period = match[3].toLowerCase();
+
+    if (period === "am" && hours === 12) hours = 0;
+    if (period === "pm" && hours !== 12) hours += 12;
+
+    return hours * 60 + minutes;
+  };
+
   const formatDate = (dateStr: string) => {
     try {
       const [year, month, day] = dateStr.split("-").map(Number);
@@ -165,36 +203,108 @@ export default function Bookings() {
     }
   };
 
-  const upcomingBookings = bookings.filter((b) => !b.isPast);
-  const pastBookings = bookings.filter((b) => b.isPast);
+  // Backend returns everything sorted newest-selectedDate-first (best
+  // for a flat "Past" list), but Upcoming reads naturally the other
+  // way round — soonest appointment first, like any real booking app.
+  // Sorted here (not on the backend) since the same fetch feeds both
+  // tabs. groupBookingsByDate() below relies on this ordering — it
+  // only buckets, it doesn't re-sort.
+  const upcomingBookings = bookings
+    .filter((b) => !b.isPast)
+    .sort((a, b) => {
+      if (a.selectedDate !== b.selectedDate) {
+        return a.selectedDate < b.selectedDate ? -1 : 1;
+      }
+      return timeToMinutes(a.selectedTime) - timeToMinutes(b.selectedTime);
+    });
+
+  const pastBookings = bookings
+    .filter((b) => b.isPast)
+    .sort((a, b) => {
+      if (a.selectedDate !== b.selectedDate) {
+        return a.selectedDate > b.selectedDate ? -1 : 1;
+      }
+      return timeToMinutes(b.selectedTime) - timeToMinutes(a.selectedTime);
+    });
 
   const visibleBookings = activeTab === "upcoming" ? upcomingBookings : pastBookings;
+  const bookingGroups = groupBookingsByDate(visibleBookings, activeTab);
 
   const getStatusPillStyle = (status: string) => {
     if (status === "Cancelled") return styles.cancelPill;
     if (status === "Completed") return styles.completedPill;
-    if (status === "Awaiting Confirmation") return styles.awaitingPill;
+    // "Awaiting Completion" — a Confirmed appointment whose time has
+    // passed but staff hasn't marked it done yet. Distinct from
+    // "Pending" below (a brand new request the salon hasn't reviewed
+    // yet) even though both are "waiting on staff" in a loose sense.
+    if (status === "Awaiting Completion") return styles.awaitingPill;
+    if (status === "Pending") return styles.pendingPill;
     return styles.statusPill;
   };
 
   const openFeedbackModal = (bookingId: string) => {
-    const existing = feedbackByBookingId[bookingId];
+    const booking = bookings.find((b) => b._id === bookingId);
+    const existing = booking?.review;
+
     setFeedbackModal({
       mode: existing ? "view" : "write",
       bookingId,
-      text: existing || "",
+      rating: existing?.rating || 0,
+      text: existing?.comment || "",
     });
   };
 
-  const submitFeedback = () => {
-    if (!feedbackModal.bookingId || !feedbackModal.text.trim()) return;
+  const closeFeedbackModal = () =>
+    setFeedbackModal({ mode: "write", bookingId: null, rating: 0, text: "" });
 
-    setFeedbackByBookingId((prev) => ({
-      ...prev,
-      [feedbackModal.bookingId as string]: feedbackModal.text.trim(),
-    }));
+  const submitFeedback = async () => {
+    if (!feedbackModal.bookingId || submittingFeedback) return;
 
-    setFeedbackModal({ mode: "write", bookingId: null, text: "" });
+    if (!feedbackModal.rating) {
+      showAlert("Rating Required", "Please tap a star to rate your appointment.");
+      return;
+    }
+
+    try {
+      setSubmittingFeedback(true);
+      const token = await AsyncStorage.getItem("customerToken");
+
+      const res = await fetch(REVIEW_API(feedbackModal.bookingId), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          rating: feedbackModal.rating,
+          comment: feedbackModal.text.trim(),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || "Unable to submit your review");
+      }
+
+      const bookingId = feedbackModal.bookingId;
+
+      setBookings((prev) =>
+        prev.map((b) =>
+          b._id === bookingId
+            ? { ...b, review: { rating: data.review.rating, comment: data.review.comment } }
+            : b
+        )
+      );
+
+      closeFeedbackModal();
+      showAlert("Thank You!", "Your feedback has been submitted.");
+    } catch (error: any) {
+      console.log("Submit review error:", error);
+      showAlert("Error", error?.message || "Unable to submit your review.");
+    } finally {
+      setSubmittingFeedback(false);
+    }
   };
 
   return (
@@ -269,7 +379,10 @@ export default function Bookings() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {visibleBookings.map((booking) => {
+          {bookingGroups.map((group) => (
+            <View key={group.label}>
+              <Text style={styles.groupLabel}>{group.label}</Text>
+              {group.items.map((booking) => {
             const serviceNames = (booking.services || [])
               .map((s) => s.name)
               .filter(Boolean)
@@ -279,7 +392,7 @@ export default function Bookings() {
             // past-due Confirmed bookings) instead of the raw status,
             // so the pill and feedback button reflect reality.
             const displayStatus = booking.effectiveStatus || booking.status;
-            const hasFeedback = !!feedbackByBookingId[booking._id];
+            const hasFeedback = !!booking.review;
 
             return (
               <View key={booking._id} style={styles.card}>
@@ -362,8 +475,17 @@ export default function Bookings() {
                             serviceName: serviceNames || "Service",
                             date: formatDate(booking.selectedDate),
                             time: booking.selectedTime,
+                            // Raw (unformatted) date, needed by the
+                            // bridal date pickers reschedule.tsx hands
+                            // off to — formatDate() above is for
+                            // display only.
+                            rawSelectedDate: booking.selectedDate,
                             staffId: booking.staff?.staffId || "",
                             estimatedDuration: String(booking.estimatedDuration || ""),
+                            bookingType: booking.bookingType || "",
+                            wantsTrialMakeup: String(Boolean(booking.wantsTrialMakeup)),
+                            trialMakeupDate: booking.trialMakeupDate || "",
+                            trialMakeupTime: booking.trialMakeupTime || "",
                           },
                         })
                       }
@@ -385,8 +507,10 @@ export default function Bookings() {
                   </TouchableOpacity>
                 )}
               </View>
-            );
-          })}
+                );
+              })}
+            </View>
+          ))}
         </ScrollView>
       )}
 
@@ -425,14 +549,13 @@ export default function Bookings() {
       </Modal>
 
       {/* Feedback modal — write or view, same modal, different mode.
-          NOTE: this is a local, demo-only simulation — feedback text
-          lives in component state only and is not sent to any backend
-          yet. Wire up a real endpoint here if you want it to persist. */}
+          Backed by a real review (rating 1-5 + optional comment) sent
+          to POST /api/bookings/:bookingId/review. */}
       <Modal
         visible={!!feedbackModal.bookingId}
         transparent
         animationType="fade"
-        onRequestClose={() => setFeedbackModal({ mode: "write", bookingId: null, text: "" })}
+        onRequestClose={closeFeedbackModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
@@ -444,15 +567,36 @@ export default function Bookings() {
               />
             </View>
             <Text style={styles.modalTitle}>
-              {feedbackModal.mode === "view" ? "Your Feedback" : "Leave Feedback"}
+              {feedbackModal.mode === "view" ? "Your Feedback" : "Rate Your Appointment"}
             </Text>
 
+            <View style={styles.starRow}>
+              {[1, 2, 3, 4, 5].map((star) => (
+                <TouchableOpacity
+                  key={star}
+                  disabled={feedbackModal.mode === "view"}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                  onPress={() => setFeedbackModal((prev) => ({ ...prev, rating: star }))}
+                >
+                  <Feather
+                    name="star"
+                    size={30}
+                    color={star <= feedbackModal.rating ? "#FFB800" : "#E0E0E0"}
+                    style={star <= feedbackModal.rating ? styles.starFilled : undefined}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+
             {feedbackModal.mode === "view" ? (
-              <Text style={styles.modalMessage}>{feedbackModal.text}</Text>
+              feedbackModal.text ? (
+                <Text style={styles.modalMessage}>{feedbackModal.text}</Text>
+              ) : null
             ) : (
               <TextInput
                 style={styles.feedbackInput}
-                placeholder="How was your experience?"
+                placeholder="How was your experience? (optional)"
                 placeholderTextColor="#999"
                 multiline
                 numberOfLines={4}
@@ -464,28 +608,33 @@ export default function Bookings() {
             )}
 
             <TouchableOpacity
-              style={styles.modalButton}
+              style={[styles.modalButton, submittingFeedback && styles.modalButtonDisabled]}
               activeOpacity={0.8}
+              disabled={submittingFeedback}
               onPress={
                 feedbackModal.mode === "view"
-                  ? () => setFeedbackModal({ mode: "write", bookingId: null, text: "" })
+                  ? () => setFeedbackModal((prev) => ({ ...prev, mode: "write" }))
                   : submitFeedback
               }
             >
               <Text style={styles.modalButtonText}>
-                {feedbackModal.mode === "view" ? "Close" : "Submit Feedback"}
+                {feedbackModal.mode === "view"
+                  ? "Edit Feedback"
+                  : submittingFeedback
+                  ? "Submitting..."
+                  : "Submit Feedback"}
               </Text>
             </TouchableOpacity>
 
-            {feedbackModal.mode === "write" && (
-              <TouchableOpacity
-                style={styles.modalButtonSecondary}
-                activeOpacity={0.8}
-                onPress={() => setFeedbackModal({ mode: "write", bookingId: null, text: "" })}
-              >
-                <Text style={styles.modalButtonSecondaryText}>Cancel</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.modalButtonSecondary}
+              activeOpacity={0.8}
+              onPress={closeFeedbackModal}
+            >
+              <Text style={styles.modalButtonSecondaryText}>
+                {feedbackModal.mode === "view" ? "Close" : "Cancel"}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -527,6 +676,15 @@ const styles = StyleSheet.create({
   header: {
     fontSize: 18,
     fontWeight: "600",
+  },
+
+  groupLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#999",
+    marginBottom: 8,
+    marginTop: 4,
+    textTransform: "uppercase",
   },
 
   toggleWrapper: {
@@ -658,6 +816,14 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
 
+  pendingPill: {
+    backgroundColor: "#DCEBFF",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+
   cancelPill: {
     backgroundColor: "#eee",
     paddingHorizontal: 10,
@@ -780,12 +946,26 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
+  starRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 18,
+  },
+
+  starFilled: {
+    transform: [{ scale: 1.05 }],
+  },
+
   modalButton: {
     width: "100%",
     backgroundColor: "#FF2D75",
     paddingVertical: 13,
     borderRadius: 25,
     alignItems: "center",
+  },
+
+  modalButtonDisabled: {
+    opacity: 0.6,
   },
 
   modalButtonText: {

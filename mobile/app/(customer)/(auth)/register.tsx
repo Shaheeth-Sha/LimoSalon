@@ -15,6 +15,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { signInWithGoogle } from "../../../utils/googleAuth";
+import { BASE_URL } from "../../../config/api";
 
 // =====================================================
 // Pending registration holder — uses React Native's global object
@@ -288,7 +289,7 @@ export default function Register() {
       const idToken = await signInWithGoogle();
 
       const res = await fetch(
-        "http://10.0.2.2:5000/api/customers/google-auth",
+        `${BASE_URL}/api/customers/google-auth`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

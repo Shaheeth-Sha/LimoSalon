@@ -81,7 +81,7 @@ type DateItem = {
 
 
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 const TIME_SLOTS_API = `${BASE_URL}/api/time-slots`;
 
 // Used only if the network request itself fails (e.g. offline) so
@@ -508,18 +508,21 @@ export default function DateAndTime(){
 
 
 
-  const isHairFlow =
-    booking==="hair";
+  // Hair and Nail both have an extra "Choose Length"/"Choose Style"
+  // step before this screen, so both need the 5-step count — every
+  // other category stays at 4.
+  const hasExtraStep =
+    booking==="hair" || booking==="nail";
 
 
 
   const totalSteps =
-    isHairFlow ? 5 : 4;
+    hasExtraStep ? 5 : 4;
 
 
 
   const currentStep =
-    isHairFlow ? 3 : 2;
+    hasExtraStep ? 3 : 2;
 
 
 

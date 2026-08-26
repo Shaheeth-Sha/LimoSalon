@@ -23,14 +23,16 @@ import {
   useStripe,
 } from "@stripe/stripe-react-native";
 
+import { BASE_URL } from "../../../config/api";
+
 
 
 const PAYMENT_API =
-  "http://10.0.2.2:5000/api/payments";
+  `${BASE_URL}/api/payments`;
 
 
 const BOOKING_API =
-  "http://10.0.2.2:5000/api/bookings";
+  `${BASE_URL}/api/bookings`;
 
 // Mirrors the same threshold used on the payment method screen and
 // the backend — a non-bridal booking under this total has no advance
@@ -106,6 +108,11 @@ export default function CardPayment() {
     bookingType,
     holdId,
     estimatedDuration,
+    wantsTrialMakeup,
+    trialMakeupDate,
+    trialMakeupTime,
+    trialHoldId,
+    notes,
 
   } = useLocalSearchParams();
 
@@ -565,6 +572,37 @@ export default function CardPayment() {
                   ),
 
 
+                // Bridal-only fields collected by trialMakeup.tsx /
+                // trialMakeupDate.tsx / additionalNotes.tsx and
+                // forwarded unchanged through confirm.tsx and
+                // payment.tsx. Empty/false for every other booking
+                // type since those screens are never visited.
+                wantsTrialMakeup:
+                  getParamValue(
+                    wantsTrialMakeup
+                  ) === "true",
+
+                trialMakeupDate:
+                  getParamValue(
+                    trialMakeupDate
+                  ),
+
+                trialMakeupTime:
+                  getParamValue(
+                    trialMakeupTime
+                  ),
+
+                trialHoldId:
+                  getParamValue(
+                    trialHoldId
+                  ),
+
+                notes:
+                  getParamValue(
+                    notes
+                  ),
+
+
 
                 paymentOption,
 
@@ -644,6 +682,10 @@ export default function CardPayment() {
     getParamValue(selectedStaff),
 
 
+  bookingType:
+    getParamValue(bookingType),
+
+
   totalAmount:
     String(total),
 
@@ -690,6 +732,17 @@ export default function CardPayment() {
     bookingData.booking?.transactionReference ||
     "",
 
+  // Bridal-only — read back from the saved booking rather than
+  // the raw params, so bookingSuccess.tsx shows exactly what was
+  // actually persisted.
+  wantsTrialMakeup:
+    String(Boolean(bookingData.booking?.wantsTrialMakeup)),
+
+  trialMakeupDate:
+    bookingData.booking?.trialMakeupDate || "",
+
+  trialMakeupTime:
+    bookingData.booking?.trialMakeupTime || "",
 
 },
 

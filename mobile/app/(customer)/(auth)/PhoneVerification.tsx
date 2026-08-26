@@ -11,6 +11,7 @@ import {
 import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
+import { BASE_URL } from "../../../config/api";
 
 // Reads the same global object Register.tsx writes to — no import
 // path needed, avoids Metro resolution issues.
@@ -22,7 +23,7 @@ declare global {
     | undefined;
 }
 
-const API_URL = "http://10.0.2.2:5000/api/customers";
+const API_URL = `${BASE_URL}/api/customers`;
 
 type AlertState = {
   visible: boolean;

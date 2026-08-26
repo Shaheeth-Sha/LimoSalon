@@ -1,0 +1,216 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather, Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BASE_URL } from '../../config/api';
+
+const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
+
+type Booking = {
+  _id: string;
+  customer?: { name?: string };
+  services: { name: string }[];
+  selectedDate: string;
+  selectedTime: string;
+  status: string;
+  effectiveStatus: string;
+};
+
+const formatLocalDate = (date: Date): string =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const formatDisplayTime = (time: string): string =>
+  time ? time.replace(/am$/i, 'A.M').replace(/pm$/i, 'P.M') : '';
+
+const statusColor = (status: string) => {
+  if (status === 'Completed') return { bg: '#E4F7E9', text: '#1E8A3C' };
+  if (status === 'Cancelled') return { bg: '#FBE4E4', text: '#C13333' };
+  // Renamed from "Awaiting Confirmation" — now belongs to a Confirmed
+  // appointment whose time has passed but hasn't been marked
+  // Completed yet, distinct from "Pending" below (a new request that
+  // hasn't been confirmed or declined at all).
+  if (status === 'Awaiting Completion') return { bg: '#FFF3D6', text: '#8A6D1F' };
+  if (status === 'Pending') return { bg: '#DCEBFF', text: '#1D5FAB' };
+  return { bg: '#FDE4ED', text: '#FF1462' };
+};
+
+export default function TodayJobs() {
+  const router = useRouter();
+  const isFocused = useIsFocused();
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem('staffToken');
+      if (!token) {
+        router.replace('/');
+        return;
+      }
+
+      const res = await fetch(MY_BOOKINGS_API, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setBookings([]);
+        return;
+      }
+
+      const todayStr = formatLocalDate(new Date());
+      const all: Booking[] = Array.isArray(data.bookings) ? data.bookings : [];
+      setBookings(all.filter((b) => b.selectedDate === todayStr));
+    } catch (error) {
+      console.error('Load today jobs failed:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [router]);
+
+  // Fixed: this screen only ever loaded once on mount, so cancelling a
+  // booking from the schedule detail screen and navigating back here
+  // (the stack keeps this component alive underneath) kept showing
+  // whatever the list looked like before the cancellation — same
+  // staleness bug already fixed on my-schedule.tsx and the badge/
+  // notification screens via useIsFocused.
+  useEffect(() => {
+    if (isFocused) {
+      load();
+    }
+  }, [isFocused, load]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    load();
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+          <Feather name="chevron-left" size={26} color="#111" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Today's Jobs</Text>
+        <View style={styles.headerSpacer} />
+      </View>
+
+      {loading ? (
+        <View style={styles.loaderBox}>
+          <ActivityIndicator size="large" color="#FF1462" />
+        </View>
+      ) : (
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF1462" />}
+        >
+          <Text style={styles.countText}>
+            {bookings.length} appointment{bookings.length === 1 ? '' : 's'} today
+          </Text>
+
+          {bookings.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Ionicons name="calendar-outline" size={40} color="#D0D0D0" />
+              <Text style={styles.emptyText}>No appointments scheduled for today.</Text>
+            </View>
+          ) : (
+            bookings.map((b) => {
+              const status = b.effectiveStatus || b.status;
+              const colors = statusColor(status);
+              const serviceNames = (b.services || []).map((s) => s.name).join(', ') || 'Service';
+
+              return (
+                <TouchableOpacity
+                  key={b._id}
+                  style={styles.card}
+                  activeOpacity={0.8}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/schedule',
+                      params: {
+                        bookingId: b._id,
+                        customerName: b.customer?.name || 'Customer',
+                        service: serviceNames,
+                        date: b.selectedDate,
+                        time: b.selectedTime,
+                        status: b.status,
+                      },
+                    })
+                  }
+                >
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarInitial}>
+                      {(b.customer?.name || 'C').charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.cardBody}>
+                    <Text style={styles.name} numberOfLines={1}>{b.customer?.name || 'Customer'}</Text>
+                    <Text style={styles.service} numberOfLines={1}>{serviceNames}</Text>
+                    <Text style={styles.time}>{formatDisplayTime(b.selectedTime)}</Text>
+                  </View>
+                  <View style={[styles.statusBadge, { backgroundColor: colors.bg }]}>
+                    <Text style={[styles.statusText, { color: colors.text }]}>{status}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })
+          )}
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff' },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    marginBottom: 12,
+  },
+  backArrow: { width: 36, height: 36, justifyContent: 'center', alignItems: 'flex-start' },
+  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#111' },
+  headerSpacer: { width: 36 },
+  scrollContent: { paddingHorizontal: 24, paddingBottom: 20 },
+  loaderBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  countText: { fontSize: 13, color: '#8E8E93', marginBottom: 16 },
+  emptyBox: { alignItems: 'center', paddingVertical: 60 },
+  emptyText: { color: '#8E8E93', fontSize: 14, marginTop: 12, textAlign: 'center' },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 14,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#FFE1EC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  avatarInitial: { fontSize: 18, fontWeight: '700', color: '#FF1462' },
+  cardBody: { flex: 1 },
+  name: { fontSize: 15, fontWeight: '600', color: '#111', marginBottom: 3 },
+  service: { fontSize: 13, color: '#666', marginBottom: 3 },
+  time: { fontSize: 12, color: '#999' },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  statusText: { fontSize: 11, fontWeight: '600' },
+});

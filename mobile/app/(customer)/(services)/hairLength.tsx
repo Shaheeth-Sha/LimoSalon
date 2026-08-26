@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { BASE_URL } from "../../../config/api";
 
-const HAIR_LENGTH_API = "http://10.0.2.2:5000/api/hair-lengths";
+const HAIR_LENGTH_API = `${BASE_URL}/api/hair-lengths`;
 
 type HairLengthItem = {
   _id: string;
@@ -93,51 +94,61 @@ export default function HairLength() {
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>Selected Services</Text>
+      {/* Fixed: this screen had no ScrollView at all — Selected
+          Services, the hair length list, and the Continue button were
+          just stacked plain Views. On a longer list or a smaller
+          device, content could overflow past the screen with no way
+          to scroll down to it or reach Continue. Same class of bug
+          already fixed on services.tsx and nail.tsx. */}
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <Text style={styles.sectionTitle}>Selected Services</Text>
 
-      {services.length === 0 ? (
-        <Text style={styles.emptyText}>No services selected</Text>
-      ) : (
-        services.map((item: any, index: number) => (
-          <View key={index} style={styles.serviceCard}>
-            <Text style={styles.serviceName}>{item.name}</Text>
-            <Text style={styles.serviceTime}>
-              {item.durationText || `${item.duration} minutes`}
-            </Text>
-            <Text style={styles.servicePrice}>
-              LKR {Number(item.price).toLocaleString()}
-            </Text>
-          </View>
-        ))
-      )}
-
-      <Text style={styles.sectionTitle}>Select Hair Length</Text>
-
-      {loading ? (
-        <ActivityIndicator size="large" color="#ff2d55" />
-      ) : (
-        hairLengths.map((item) => (
-          <TouchableOpacity
-            key={item._id}
-            onPress={() => setSelectedLength(item._id)}
-            style={[
-              styles.lengthCard,
-              selectedLength === item._id && styles.selectedCard,
-            ]}
-          >
-            <View>
-              <Text style={styles.lengthTitle}>{item.name}</Text>
-              <Text style={styles.lengthDesc}>{item.description}</Text>
+        {services.length === 0 ? (
+          <Text style={styles.emptyText}>No services selected</Text>
+        ) : (
+          services.map((item: any, index: number) => (
+            <View key={index} style={styles.serviceCard}>
+              <Text style={styles.serviceName}>{item.name}</Text>
+              <Text style={styles.serviceTime}>
+                {item.durationText || `${item.duration} minutes`}
+              </Text>
+              <Text style={styles.servicePrice}>
+                LKR {Number(item.price).toLocaleString()}
+              </Text>
             </View>
+          ))
+        )}
 
-            <Text style={styles.lengthPrice}>
-              {item.extraPrice === 0
-                ? "Base Price"
-                : `Base Price + ${item.extraPrice}`}
-            </Text>
-          </TouchableOpacity>
-        ))
-      )}
+        <Text style={styles.sectionTitle}>Select Hair Length</Text>
+
+        {loading ? (
+          <ActivityIndicator size="large" color="#FF2D75" />
+        ) : (
+          hairLengths.map((item) => (
+            <TouchableOpacity
+              key={item._id}
+              onPress={() => setSelectedLength(item._id)}
+              style={[
+                styles.lengthCard,
+                selectedLength === item._id && styles.selectedCard,
+              ]}
+            >
+              <View>
+                <Text style={styles.lengthTitle}>{item.name}</Text>
+                <Text style={styles.lengthDesc}>{item.description}</Text>
+              </View>
+
+              <Text style={styles.lengthPrice}>
+                {item.extraPrice === 0
+                  ? "Base Price"
+                  : `Base Price + ${item.extraPrice}`}
+              </Text>
+            </TouchableOpacity>
+          ))
+        )}
+
+        <View style={{ height: 20 }} />
+      </ScrollView>
 
       <TouchableOpacity
         disabled={!selectedLength}
@@ -162,6 +173,10 @@ export default function HairLength() {
   );
 }
 
+// =====================================================
+// App primary color: #FF2D75 (matches project design spec)
+// Was #ff2d55/#FF2D55 throughout — fixed to the correct hex.
+// =====================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -214,11 +229,11 @@ const styles = StyleSheet.create({
   },
 
   stepActive: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
   },
 
   stepDone: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
   },
 
   stepLine: {
@@ -234,7 +249,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     marginBottom: 10,
     borderWidth: 1.5,
-    borderColor: "#ff2d55",
+    borderColor: "#FF2D75",
   },
 
   serviceName: {
@@ -249,7 +264,7 @@ const styles = StyleSheet.create({
   },
 
   servicePrice: {
-    color: "#ff2d55",
+    color: "#FF2D75",
     marginTop: 5,
     fontWeight: "700",
   },
@@ -266,7 +281,7 @@ const styles = StyleSheet.create({
 
   selectedCard: {
     borderWidth: 2,
-    borderColor: "#ff2d55",
+    borderColor: "#FF2D75",
     backgroundColor: "#fff",
   },
 
@@ -280,14 +295,14 @@ const styles = StyleSheet.create({
   },
 
   lengthPrice: {
-    color: "#ff2d55",
+    color: "#FF2D75",
     fontWeight: "700",
     maxWidth: 170,
     textAlign: "right",
   },
 
   continueBtn: {
-    backgroundColor: "#ff2d55",
+    backgroundColor: "#FF2D75",
     padding: 15,
     borderRadius: 25,
     alignItems: "center",

@@ -1,31 +1,188 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Image, Platform } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Platform, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router'; // 👈 Expo Router සම්බන්ධ කලා
+import { useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { BASE_URL } from '../../config/api';
+import { useStaffUnreadCount } from '../../hooks/useStaffUnreadCount';
+
+const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
+const HOME_STATS_API = `${BASE_URL}/api/staff/stats/home`;
+
+type Booking = {
+  _id: string;
+  customer?: { name?: string };
+  services: { name: string }[];
+  selectedDate: string;
+  selectedTime: string;
+  status: string;
+  effectiveStatus: string;
+  isPast: boolean;
+};
+
+type HomeStats = {
+  todaysJobs: number;
+  weekJobs: number;
+  weekRevenue: number;
+  rating: number;
+  reviewCount: number;
+};
+
+const formatLocalDate = (date: Date): string => {
+  return (
+    `${date.getFullYear()}-` +
+    `${String(date.getMonth() + 1).padStart(2, '0')}-` +
+    `${String(date.getDate()).padStart(2, '0')}`
+  );
+};
+
+// "10.00 am" (how the booking flow stores it) -> "10.00 A.M" for the
+// staff-side card style already designed here.
+const formatDisplayTime = (time: string): string =>
+  time ? time.replace(/am$/i, 'A.M').replace(/pm$/i, 'P.M') : '';
 
 export default function Home() {
   const [search, setSearch] = useState('');
-  const router = useRouter(); // 👈 Router එක ඩිෆයින් කලා
+  const [staffName, setStaffName] = useState('');
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [stats, setStats] = useState<HomeStats | null>(null);
+  const router = useRouter();
+  const isFocused = useIsFocused();
+  const { unreadCount } = useStaffUnreadCount();
 
-  const todaysAppointments = [
-    { id: '1', name: 'Nimasha Kumara', service: 'Hair Cut', time: '10.00A.M', status: 'Pending', img: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150' },
-    { id: '2', name: 'Hiruni Navodya', service: 'Color treatment', time: '12.00 P.M', status: 'Confirmed', img: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150' },
-  ];
+  const loadStats = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem('staffToken');
+      if (!token) return;
 
-  const upcomingAppointments = [
-    { id: '3', name: 'Amasha Pathirana', service: 'Hair Cut', time: '10.00A.M Tomorow', status: 'Pending', img: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150' },
-    { id: '4', name: 'Naduni Wasana', service: 'Facial treatments', time: '13.00 P.M', status: 'Pending', img: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150' },
-  ];
+      const res = await fetch(HOME_STATS_API, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+      if (res.ok && data.stats) {
+        setStats(data.stats);
+      }
+    } catch (error) {
+      // Non-critical — the stat tiles just stay blank/zero if this fails,
+      // the rest of the home screen still works.
+      console.error('Load staff home stats failed:', error);
+    }
+  }, []);
+
+  const loadBookings = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem('staffToken');
+
+      if (!token) {
+        router.replace('/');
+        return;
+      }
+
+      const res = await fetch(MY_BOOKINGS_API, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        // An expired/invalid token is the only realistic failure here
+        // (this endpoint has no other user-facing error case) — send
+        // them back to log in again rather than showing a dead screen.
+        await AsyncStorage.multiRemove(['staffToken', 'staffData']);
+        router.replace('/');
+        return;
+      }
+
+      setBookings(Array.isArray(data.bookings) ? data.bookings : []);
+    } catch (error) {
+      console.error('Load staff bookings failed:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('staffData');
+        if (stored) {
+          const staff = JSON.parse(stored);
+          setStaffName(staff?.name || '');
+        }
+      } catch {
+        // Non-critical — greeting just falls back to no name.
+      }
+    })();
+  }, []);
+
+  // Refetches every time this screen regains focus (e.g. coming back
+  // from marking a booking complete on another screen), not just on
+  // first mount.
+  useEffect(() => {
+    if (isFocused) {
+      loadBookings();
+      loadStats();
+    }
+  }, [isFocused, loadBookings, loadStats]);
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadBookings();
+    loadStats();
+  };
+
+  const todayStr = formatLocalDate(new Date());
+
+  const activeBookings = bookings.filter(
+    (b) => b.status !== 'Cancelled' && b.status !== 'Completed'
+  );
+
+  const searchText = search.trim().toLowerCase();
+
+  const matchesSearch = (b: Booking) => {
+    if (!searchText) return true;
+    const name = b.customer?.name?.toLowerCase() || '';
+    const services = (b.services || []).map((s) => s.name).join(', ').toLowerCase();
+    return name.includes(searchText) || services.includes(searchText);
+  };
+
+  const toCardItem = (b: Booking) => ({
+    id: b._id,
+    name: b.customer?.name || 'Customer',
+    service: (b.services || []).map((s) => s.name).join(', ') || 'Service',
+    time: formatDisplayTime(b.selectedTime),
+    rawTime: b.selectedTime,
+    date: b.selectedDate,
+    status: b.effectiveStatus || b.status,
+    rawStatus: b.status,
+  });
+
+  const todaysAppointments = activeBookings
+    .filter((b) => b.selectedDate === todayStr && matchesSearch(b))
+    .map(toCardItem);
+
+  const upcomingAppointments = activeBookings
+    .filter((b) => b.selectedDate > todayStr && matchesSearch(b))
+    .map(toCardItem);
 
   return (
     <View style={styles.mainContainer}>
-      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-        
+      <ScrollView
+        style={styles.scrollContainer}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF1462" />}
+      >
+
         {}
         {/* Header Section */}
         <View style={styles.headerSection}>
           <Text style={styles.greetingText}>Good Morning,</Text>
-          <Text style={styles.userNameText}>Venumi Rathnayeka</Text>
+          <Text style={styles.userNameText}>{staffName || 'Welcome back'}</Text>
         </View>
 
         {/* Search Bar */}
@@ -40,62 +197,188 @@ export default function Home() {
           />
         </View>
 
-        {}
-        {/* Today's Appointment Section */}
-        <Text style={styles.sectionTitle}>Today's Appointment</Text>
-        {todaysAppointments.map((item) => (
-          <View key={item.id} style={styles.appointmentCard}>
-            <Image source={{ uri: item.img }} style={styles.avatar} />
-            <View style={styles.cardDetails}>
-              <View style={styles.rowLayout}>
-                <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
-                
-                <View style={styles.infoStack}>
-                  <Text style={styles.serviceText} numberOfLines={1}>{item.service}</Text>
-                  <Text style={styles.timeText}>{item.time}</Text>
-                </View>
-              </View>
+        {/* Stat Tiles — Home's entry point into the dashboard flow
+            (Today's Jobs / Average Rating / Recent Reviews / Weekly
+            Summary / Top Customer / Appointment History). */}
+        <Text style={styles.sectionTitle}>Your Stats</Text>
+        <View style={styles.statsGrid}>
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/today-jobs')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="briefcase-outline" size={20} color="#FF1462" />
             </View>
-            {/* 💡 මෙතන soft pink status badge එක TouchableOpacity එකක් කරලා /schedule පේජ් එකට ලින්ක් කලා */}
-            <TouchableOpacity 
-              style={styles.statusBadge}
-              activeOpacity={0.7}
-              onPress={() => router.push('/schedule')}
-            >
-              <Text style={styles.statusText}>{item.status}</Text>
-            </TouchableOpacity>
-          </View>
-        ))}
+            <Text style={styles.statValue}>{stats ? stats.todaysJobs : '-'}</Text>
+            <Text style={styles.statLabel}>Today's Jobs</Text>
+          </TouchableOpacity>
 
-        {/* Clean Divider Line */}
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/weekly-summary')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="cash-outline" size={20} color="#FF1462" />
+            </View>
+            <Text style={styles.statValue}>
+              {stats ? `LKR ${stats.weekRevenue.toLocaleString()}` : '-'}
+            </Text>
+            <Text style={styles.statLabel}>This Week</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/average-rating')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="star" size={20} color="#FF1462" />
+            </View>
+            <Text style={styles.statValue}>{stats ? stats.rating.toFixed(1) : '-'}</Text>
+            <Text style={styles.statLabel}>Average Rating</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/recent-reviews')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="chatbubbles-outline" size={20} color="#FF1462" />
+            </View>
+            <Text style={styles.statValue}>{stats ? stats.reviewCount : '-'}</Text>
+            <Text style={styles.statLabel}>Reviews</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/top-customer')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="trophy-outline" size={20} color="#FF1462" />
+            </View>
+            <Text style={styles.statValue}>{'★'}</Text>
+            <Text style={styles.statLabel}>Top Customer</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.statTile}
+            activeOpacity={0.8}
+            onPress={() => router.push('/appointment-history')}
+          >
+            <View style={styles.statIconBg}>
+              <Ionicons name="time-outline" size={20} color="#FF1462" />
+            </View>
+            <Text style={styles.statValue}>{stats ? stats.weekJobs : '-'}</Text>
+            <Text style={styles.statLabel}>History</Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.divider} />
 
-        {}
-        {/* Upcoming Appointments Section */}
-        <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
-        {upcomingAppointments.map((item) => (
-          <View key={item.id} style={styles.appointmentCard}>
-            <Image source={{ uri: item.img }} style={styles.avatar} />
-            <View style={styles.cardDetails}>
-              <View style={styles.rowLayout}>
-                <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
-                
-                <View style={styles.infoStack}>
-                  <Text style={styles.serviceText} numberOfLines={1}>{item.service}</Text>
-                  <Text style={styles.timeText}>{item.time}</Text>
-                </View>
-              </View>
-            </View>
-            {/* 💡 මෙතනත් soft pink status badge එක TouchableOpacity එකක් කරලා /schedule පේජ් එකට ලින්ක් කලා */}
-            <TouchableOpacity 
-              style={styles.statusBadge}
-              activeOpacity={0.7}
-              onPress={() => router.push('/schedule')}
-            >
-              <Text style={styles.statusText}>{item.status}</Text>
-            </TouchableOpacity>
+        {loading ? (
+          <View style={styles.loaderBox}>
+            <ActivityIndicator size="large" color="#FF1462" />
           </View>
-        ))}
+        ) : (
+          <>
+            {}
+            {/* Today's Appointment Section */}
+            <Text style={styles.sectionTitle}>Today's Appointment</Text>
+            {todaysAppointments.length === 0 ? (
+              <Text style={styles.emptyText}>No appointments today.</Text>
+            ) : (
+              todaysAppointments.map((item) => (
+                <View key={item.id} style={styles.appointmentCard}>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarInitial}>{item.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.cardDetails}>
+                    <View style={styles.rowLayout}>
+                      <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
+
+                      <View style={styles.infoStack}>
+                        <Text style={styles.serviceText} numberOfLines={1}>{item.service}</Text>
+                        <Text style={styles.timeText}>{item.time}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  {/* 💡 මෙතන soft pink status badge එක TouchableOpacity එකක් කරලා /schedule පේජ් එකට ලින්ක් කලා */}
+                  <TouchableOpacity
+                    style={styles.statusBadge}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/schedule',
+                        params: {
+                          bookingId: item.id,
+                          customerName: item.name,
+                          service: item.service,
+                          date: item.date,
+                          time: item.rawTime,
+                          status: item.rawStatus,
+                        },
+                      })
+                    }
+                  >
+                    <Text style={styles.statusText}>{item.status}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+
+            {/* Clean Divider Line */}
+            <View style={styles.divider} />
+
+            {}
+            {/* Upcoming Appointments Section */}
+            <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+            {upcomingAppointments.length === 0 ? (
+              <Text style={styles.emptyText}>No upcoming appointments.</Text>
+            ) : (
+              upcomingAppointments.map((item) => (
+                <View key={item.id} style={styles.appointmentCard}>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarInitial}>{item.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.cardDetails}>
+                    <View style={styles.rowLayout}>
+                      <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
+
+                      <View style={styles.infoStack}>
+                        <Text style={styles.serviceText} numberOfLines={1}>{item.service}</Text>
+                        <Text style={styles.timeText}>{item.time}</Text>
+                      </View>
+                    </View>
+                  </View>
+                  {/* 💡 මෙතනත් soft pink status badge එක TouchableOpacity එකක් කරලා /schedule පේජ් එකට ලින්ක් කලා */}
+                  <TouchableOpacity
+                    style={styles.statusBadge}
+                    activeOpacity={0.7}
+                    onPress={() =>
+                      router.push({
+                        pathname: '/schedule',
+                        params: {
+                          bookingId: item.id,
+                          customerName: item.name,
+                          service: item.service,
+                          date: item.date,
+                          time: item.rawTime,
+                          status: item.rawStatus,
+                        },
+                      })
+                    }
+                  >
+                    <Text style={styles.statusText}>{item.status}</Text>
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
+          </>
+        )}
 
         {/* Extra bottom padding */}
         <View style={{ height: 120 }} />
@@ -118,7 +401,14 @@ export default function Home() {
         </TouchableOpacity>
          
          <TouchableOpacity style={styles.tabItem} onPress={() => router.push('/Notifications')}>
-          <Ionicons name="chatbubble-ellipses-outline" size={22} color="#FFFFFF" style={styles.inactiveIcon} />
+          <View>
+            <Ionicons name="chatbubble-ellipses-outline" size={22} color="#FFFFFF" style={styles.inactiveIcon} />
+            {unreadCount > 0 && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.tabText}>Notification</Text>
         </TouchableOpacity>
 
@@ -183,6 +473,42 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  statTile: {
+    width: '31.5%',
+    backgroundColor: '#FFF6F9',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statIconBg: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  statValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    marginBottom: 2,
+    textAlign: 'center',
+  },
+  statLabel: {
+    fontSize: 10.5,
+    color: '#8E8E93',
+    textAlign: 'center',
+  },
   appointmentCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,6 +525,23 @@ const styles = StyleSheet.create({
     height: 64,
     borderRadius: 32,
     marginRight: 12,
+    backgroundColor: '#FFE1EC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarInitial: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FF1462',
+  },
+  loaderBox: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  emptyText: {
+    color: '#8E8E93',
+    fontSize: 14,
+    marginBottom: 20,
   },
   cardDetails: {
     flex: 1,
@@ -293,6 +636,25 @@ const styles = StyleSheet.create({
   activeTabText: {
     color: '#FFFFFF',
     fontSize: 11,
+    fontWeight: '700',
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#FF1462',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 2,
+  },
+  badgeText: {
+    color: '#FF1462',
+    fontSize: 9,
     fontWeight: '700',
   },
 });

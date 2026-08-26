@@ -15,12 +15,13 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { BASE_URL } from "../../../config/api";
 
 const PAYMENT_API =
-  "http://10.0.2.2:5000/api/payments";
+  `${BASE_URL}/api/payments`;
 
 const BOOKING_API =
-  "http://10.0.2.2:5000/api/bookings";
+  `${BASE_URL}/api/bookings`;
 
 type PaymentOption = "advance" | "full";
 
@@ -344,6 +345,9 @@ export default function PaymentOtp() {
 
         selectedStaff:
           getParamValue(selectedStaff),
+
+        bookingType:
+          getParamValue(bookingType),
 
         totalAmount: String(
           booking?.totalAmount ?? total

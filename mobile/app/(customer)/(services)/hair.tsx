@@ -9,8 +9,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { BASE_URL } from "../../../config/api";
 
-const SERVICES_API = "http://10.0.2.2:5000/api/services?category=Hair";
+const SERVICES_API = `${BASE_URL}/api/services?category=Hair`;
 
 type ServiceItem = {
   _id: string;

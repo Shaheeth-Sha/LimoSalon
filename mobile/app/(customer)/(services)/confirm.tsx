@@ -39,6 +39,10 @@ const NON_BRIDAL_ADVANCE_MINIMUM = 10000;
 const BRIDAL_ADVANCE_RATE = 0.2;
 const OTHER_ADVANCE_RATE = 0.1;
 
+// Matches the backend's HOLD_DURATION_MINUTES — used only to clamp
+// the displayed countdown, see the note below.
+const HOLD_DURATION_SECONDS = 10 * 60;
+
 const getParamValue = (
   value: string | string[] | undefined
 ): string => {
@@ -147,10 +151,6 @@ export default function ConfirmBooking() {
     if (onConfirm) onConfirm();
   };
 
-  // Sends the customer back to date/time selection, carrying forward
-  // the same services/hair length/booking type they already chose so
-  // they don't have to redo those steps — only date, time, and staff
-  // need reselecting since the hold on the old slot has expired.
   const goReselectDateTime = () => {
     router.replace({
       pathname: "/(customer)/(services)/staff",
@@ -175,6 +175,9 @@ export default function ConfirmBooking() {
     holdId,
     holdExpiresAt,
     holdExpiresInSeconds,
+    wantsTrialMakeup,
+    trialMakeupDate,
+    notes,
   } = useLocalSearchParams();
 
   const selectedServicesText = getParamValue(selectedServices);
@@ -190,6 +193,13 @@ export default function ConfirmBooking() {
   const holdExpiresInSecondsText = getParamValue(
     holdExpiresInSeconds
   );
+  // Bridal-only, set by the trialMakeup.tsx / trialMakeupDate.tsx /
+  // additionalNotes.tsx mini-flow inserted between staff.tsx and this
+  // screen. Empty/undefined for every other booking type.
+  const wantsTrialMakeupText = getParamValue(wantsTrialMakeup);
+  const trialMakeupDateText = getParamValue(trialMakeupDate);
+  const notesText = getParamValue(notes);
+  const wantsTrialMakeupBool = wantsTrialMakeupText === "true";
 
   const services = useMemo(
     () => safeJsonParse<ServiceItem[]>(selectedServices, []),
@@ -255,38 +265,36 @@ export default function ConfirmBooking() {
     return 0;
   }, [isBridal, total]);
 
-  // Fixed: deadline-based countdown instead of a plain decrementing
-  // counter. The interval below only runs while the screen is
-  // focused (intentional — no need to burn a timer while the user is
-  // elsewhere). But a decrementing counter has no way to know how
-  // much real time passed during that gap, so it was resuming from
-  // whatever value it was frozen at when focus was lost — showing
-  // MORE time remaining than is actually true on the server after any
-  // real time away.
-  //
-  // The fix: fix one absolute deadline, in this device's own clock, a
-  // single time — using the accurate relative seconds the server
-  // supplied (holdExpiresInSeconds, always exactly 600s at hold
-  // creation, immune to clock skew), falling back to the absolute
-  // holdExpiresAt timestamp only if that's missing. From then on,
-  // remaining time is always `deadline - Date.now()`, recomputed
-  // fresh — so it doesn't matter how long the gap was or how many
-  // ticks were skipped, the very next read (including the one
-  // triggered immediately on refocus, below) is instantly correct.
+  // Fixed: this used to trust holdExpiresInSeconds (a plain duration,
+  // not a point in time) over holdExpiresAt (a fixed clock time). Any
+  // screen that forwards the hold onward without running its own
+  // countdown just passes that duration through unchanged, so
+  // recomputing "now + that duration" on arrival here silently pushed
+  // the apparent deadline later the longer the customer spent on
+  // earlier screens — showing time remaining even after the real,
+  // unmoving server-side expiresAt had already passed. expiresAt has
+  // to win whenever it's present.
   const deadlineRef = useRef<number | null>(null);
 
   if (deadlineRef.current === null) {
-    const suppliedSeconds = Number(holdExpiresInSecondsText);
-
-    if (Number.isFinite(suppliedSeconds) && suppliedSeconds > 0) {
-      deadlineRef.current = Date.now() + suppliedSeconds * 1000;
-    } else if (holdExpiresAtText) {
+    if (holdExpiresAtText) {
       const expiryTime = new Date(holdExpiresAtText).getTime();
+      // A few seconds of clock skew between this device and the
+      // server (common enough on emulators) can make the server's
+      // absolute expiresAt look slightly MORE than 10 minutes away
+      // from this device's own clock — showing "10:01" instead of
+      // "10:00". The hold can never legitimately have more than
+      // HOLD_DURATION_SECONDS left from right now, so cap it there.
       deadlineRef.current = Number.isNaN(expiryTime)
         ? Date.now()
-        : expiryTime;
+        : Math.min(expiryTime, Date.now() + HOLD_DURATION_SECONDS * 1000);
     } else {
-      deadlineRef.current = Date.now();
+      const suppliedSeconds = Number(holdExpiresInSecondsText);
+
+      deadlineRef.current =
+        Number.isFinite(suppliedSeconds) && suppliedSeconds > 0
+          ? Date.now() + suppliedSeconds * 1000
+          : Date.now();
     }
   }
 
@@ -304,12 +312,17 @@ export default function ConfirmBooking() {
     Boolean(holdIdText) && remainingSeconds <= 0;
 
   const isHairFlow = bookingTypeText.toLowerCase() === "hair";
-  const totalSteps = isHairFlow ? 5 : 4;
 
-  // Recompute immediately whenever focus changes (not just on the
-  // next interval tick) — this is what makes the displayed time
-  // instantly accurate the moment you come back to this screen,
-  // instead of showing a stale value for up to another second.
+  // Nail also has an extra step (its "Choose Style" screen), so it
+  // needs the same 5-step count AND the same small-dot styling as
+  // Hair. Fixed: totalSteps already correctly used hasExtraStep, but
+  // the JSX rendering the dots themselves (further down) still
+  // checked `!isHairFlow` alone in two places — same class of bug
+  // just fixed in staff.tsx, here in a second file.
+  const hasExtraStep =
+    isHairFlow || bookingTypeText.toLowerCase() === "nail";
+  const totalSteps = hasExtraStep ? 5 : 4;
+
   useEffect(() => {
     if (!holdIdText) {
       return;
@@ -319,17 +332,6 @@ export default function ConfirmBooking() {
   }, [isFocused, holdIdText]);
 
   useEffect(() => {
-    // Fixed: previously this interval kept running even after the
-    // user navigated away from this screen entirely (e.g. after
-    // completing the booking and switching to the Bookings tab).
-    // Tab navigators don't destroy inactive tabs' screens, they just
-    // hide them, so the timer silently kept counting down in the
-    // background and eventually fired the expiry alert minutes
-    // later, on top of whatever screen the user was actually looking
-    // at. Now it only runs while this screen is genuinely focused —
-    // and since the value above is deadline-based rather than
-    // decremented, accuracy no longer depends on this interval firing
-    // on schedule; it's purely a display refresh while visible.
     if (!isFocused || !holdIdText) {
       return;
     }
@@ -342,11 +344,6 @@ export default function ConfirmBooking() {
   }, [isFocused, holdIdText]);
 
   useEffect(() => {
-    // Fixed: same root cause as the timer above — only surface this
-    // alert while the user is actually on this screen. Also switched
-    // from the native Alert.alert() (the plain system-styled popup
-    // seen in testing) to the app's branded modal for consistency
-    // with every other popup in the app.
     if (!holdExpired || !isFocused) {
       return;
     }
@@ -402,6 +399,9 @@ export default function ConfirmBooking() {
         holdId: holdIdText,
         holdExpiresAt: holdExpiresAtText,
         holdExpiresInSeconds: String(remainingSeconds),
+        wantsTrialMakeup: wantsTrialMakeupText,
+        trialMakeupDate: trialMakeupDateText,
+        notes: notesText,
       },
     });
   };
@@ -434,7 +434,7 @@ export default function ConfirmBooking() {
               <View
                 style={[
                   styles.stepCircle,
-                  !isHairFlow && styles.bodyStepCircle,
+                  !hasExtraStep && styles.bodyStepCircle,
                   styles.stepDone,
                 ]}
               >
@@ -449,7 +449,7 @@ export default function ConfirmBooking() {
                 <View
                   style={[
                     styles.stepLine,
-                    !isHairFlow && styles.bodyStepLine,
+                    !hasExtraStep && styles.bodyStepLine,
                   ]}
                 />
               )}
@@ -472,7 +472,7 @@ export default function ConfirmBooking() {
                 : "time-outline"
             }
             size={21}
-            color={holdExpired ? "#D62828" : "#FF2D55"}
+            color={holdExpired ? "#D62828" : "#FF2D75"}
           />
 
           <View style={styles.holdTextBox}>
@@ -542,6 +542,31 @@ export default function ConfirmBooking() {
             {duration > 0 ? `${duration} minutes` : "-"}
           </Text>
 
+          {isBridal && (
+            <>
+              <Text style={styles.cardTitle}>Trial Makeup</Text>
+              <Text style={styles.cardValue}>
+                {wantsTrialMakeupBool ? "Yes" : "No"}
+              </Text>
+
+              {wantsTrialMakeupBool && trialMakeupDateText && (
+                <>
+                  <Text style={styles.cardTitle}>Trial Date</Text>
+                  <Text style={styles.cardValue}>
+                    {formatDate(trialMakeupDateText)}
+                  </Text>
+                </>
+              )}
+
+              {notesText ? (
+                <>
+                  <Text style={styles.cardTitle}>Notes</Text>
+                  <Text style={styles.cardValue}>{notesText}</Text>
+                </>
+              ) : null}
+            </>
+          )}
+
           <View style={styles.divider} />
 
           <View style={styles.row}>
@@ -598,12 +623,6 @@ export default function ConfirmBooking() {
         </TouchableOpacity>
       </View>
 
-      {/* Custom branded alert modal — this was missing entirely
-          before; alertState was being set but nothing ever rendered
-          it, so no popup showed at all from this path. Combined with
-          the leftover Alert.alert() calls elsewhere in this file,
-          that's why the old native-style popup kept appearing
-          instead of this one. */}
       <Modal
         visible={alertState.visible}
         transparent

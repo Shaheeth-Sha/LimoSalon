@@ -3,8 +3,9 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useState } from 'react';
 import AlertModal, { AlertType } from '../../../components/AlertModal';
+import { BASE_URL } from '../../../config/api';
 
-const API_URL = "http://10.0.2.2:5000/api/customers/forgot-password";
+const API_URL = `${BASE_URL}/api/customers/forgot-password`;
 
 export default function EmailCheck() {
   const { email } = useLocalSearchParams<{ email: string }>();

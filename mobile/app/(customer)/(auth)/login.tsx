@@ -4,12 +4,11 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { signInWithGoogle } from '../../../utils/googleAuth';
+import { BASE_URL } from '../../../config/api';
 
 // Backend login API
-const API_URL = "http://10.0.2.2:5000/api/customers/login";
-const GOOGLE_AUTH_URL = "http://10.0.2.2:5000/api/customers/google-auth";
-// NOTE: 10.0.2.2 only resolves on the Android emulator. Swap in your
-// staging/production URL (or your machine's LAN IP) before demoing on
+const API_URL = `${BASE_URL}/api/customers/login`;
+const GOOGLE_AUTH_URL = `${BASE_URL}/api/customers/google-auth`;
 
 
 

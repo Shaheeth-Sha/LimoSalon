@@ -6,13 +6,16 @@ import {
   TouchableOpacity,
   Modal,
   ActivityIndicator,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import { useState, useEffect } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BASE_URL } from "../../../config/api";
+import { resolveAvatarUrl } from "../../../utils/resolveAvatarUrl";
 
-const API_URL = "http://10.0.2.2:5000/api/customers/profile";
+const API_URL = `${BASE_URL}/api/customers/profile`;
 
 type AlertState = {
   visible: boolean;
@@ -27,6 +30,7 @@ export default function EditProfile() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [avatar, setAvatar] = useState("");
   const [initialLoading, setInitialLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -61,6 +65,7 @@ export default function EditProfile() {
           setName(customer.name || "");
           setEmail(customer.email || "");
           setPhone(customer.phone || "");
+          setAvatar(customer.avatar || "");
         }
       } catch (error) {
         console.log("Failed to load customer data:", error);
@@ -139,7 +144,11 @@ export default function EditProfile() {
 
       {/* Avatar */}
       <View style={styles.avatar}>
-        <Text style={styles.avatarInitials}>{getInitials(name)}</Text>
+        {resolveAvatarUrl(avatar) ? (
+          <Image source={{ uri: resolveAvatarUrl(avatar)! }} style={styles.avatarImage} />
+        ) : (
+          <Text style={styles.avatarInitials}>{getInitials(name)}</Text>
+        )}
       </View>
 
       {/* Section */}
@@ -241,6 +250,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginVertical: 20,
+    overflow: "hidden",
+  },
+
+  avatarImage: {
+    width: "100%",
+    height: "100%",
   },
 
   avatarInitials: {

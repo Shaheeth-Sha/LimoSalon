@@ -1,10 +1,11 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -17,8 +18,27 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 // self-contained version rather than branching the original screen
 // with conditional logic everywhere.
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 const HOLD_API = `${BASE_URL}/api/bookings/hold`;
+const TIME_SLOTS_API = `${BASE_URL}/api/time-slots`;
+
+// Same fallback DateAndTime.tsx uses if the network request itself
+// fails — keeps the screen from going blank offline.
+const FALLBACK_TIMES = [
+  "08.00 am", "09.00 am", "10.00 am", "11.00 am",
+  "12.00 pm", "01.00 pm", "02.00 pm", "03.00 pm",
+];
+
+const readJsonResponse = async (response: Response): Promise<any> => {
+  const rawBody = await response.text();
+  if (!rawBody) return {};
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error(`Unexpected server response (${response.status})`);
+  }
+};
 
 type DateItem = {
   id: number;
@@ -90,25 +110,68 @@ const generateDates = (): DateItem[] => {
 
 export default function RescheduleDateTime() {
   const router = useRouter();
-  const { bookingId, staffId, estimatedDuration, serviceName } =
+  const { bookingId, staffId, estimatedDuration, serviceName, bookingType } =
     useLocalSearchParams<{
       bookingId: string;
       staffId: string;
       estimatedDuration: string;
       serviceName: string;
+      bookingType: string;
     }>();
 
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
   const [creatingHold, setCreatingHold] = useState(false);
   const [errorText, setErrorText] = useState("");
+  const [times, setTimes] = useState<string[]>([]);
+  const [loadingTimes, setLoadingTimes] = useState(true);
 
   const dates = useMemo(() => generateDates(), []);
 
-  const times = [
-    "08.00 am", "09.00 am", "10.00 am", "11.00 am",
-    "12.00 pm", "01.00 pm", "02.00 pm", "03.00 pm",
-  ];
+  // Fetches the same admin-editable business-hours window DateAndTime.tsx
+  // uses, keyed by bookingType — this used to be a hardcoded array here,
+  // which meant reschedule kept offering old/stale times after the
+  // booking flow was switched over to the backend-driven list.
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadTimes = async () => {
+      try {
+        setLoadingTimes(true);
+
+        const response = await fetch(
+          `${TIME_SLOTS_API}?bookingType=${encodeURIComponent(bookingType || "")}`
+        );
+
+        const data = await readJsonResponse(response);
+
+        if (!response.ok) {
+          throw new Error(data.message || "Unable to load available times");
+        }
+
+        if (!isCancelled) {
+          const fetchedTimes = Array.isArray(data.times) ? data.times : FALLBACK_TIMES;
+          setTimes(fetchedTimes.length > 0 ? fetchedTimes : FALLBACK_TIMES);
+        }
+      } catch (error) {
+        console.error("Load time slots failed:", error);
+
+        if (!isCancelled) {
+          setTimes(FALLBACK_TIMES);
+        }
+      } finally {
+        if (!isCancelled) {
+          setLoadingTimes(false);
+        }
+      }
+    };
+
+    loadTimes();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [bookingType]);
 
   const handleContinue = async () => {
     if (!selectedDate || !selectedTime || creatingHold) return;
@@ -212,35 +275,42 @@ export default function RescheduleDateTime() {
 
         <Text style={styles.sectionTitle}>Available Time</Text>
 
-        <View style={styles.timeGrid}>
-          {times.map((time) => {
-            const blocked = !selectedDate || isPastTime(selectedDate, time);
-            const selected = selectedTime === time;
+        {loadingTimes ? (
+          <View style={styles.timeLoaderBox}>
+            <ActivityIndicator size="small" color="#FF2D75" />
+            <Text style={styles.timeLoaderText}>Loading available times...</Text>
+          </View>
+        ) : (
+          <View style={styles.timeGrid}>
+            {times.map((time) => {
+              const blocked = !selectedDate || isPastTime(selectedDate, time);
+              const selected = selectedTime === time;
 
-            return (
-              <TouchableOpacity
-                key={time}
-                disabled={blocked}
-                style={[
-                  styles.timeBox,
-                  selected && styles.timeActive,
-                  blocked && styles.timeDisabled,
-                ]}
-                onPress={() => setSelectedTime(time)}
-              >
-                <Text
+              return (
+                <TouchableOpacity
+                  key={time}
+                  disabled={blocked}
                   style={[
-                    styles.timeText,
-                    selected && styles.timeTextActive,
-                    blocked && styles.disabledText,
+                    styles.timeBox,
+                    selected && styles.timeActive,
+                    blocked && styles.timeDisabled,
                   ]}
+                  onPress={() => setSelectedTime(time)}
                 >
-                  {time}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                  <Text
+                    style={[
+                      styles.timeText,
+                      selected && styles.timeTextActive,
+                      blocked && styles.disabledText,
+                    ]}
+                  >
+                    {time}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
 
         {errorText ? <Text style={styles.errorText}>{errorText}</Text> : null}
 
@@ -282,6 +352,8 @@ const styles = StyleSheet.create({
   dateWeek: { color: "#fff" },
   todayText: { color: "#fff", fontSize: 11 },
   sectionTitle: { marginTop: 25, marginBottom: 15, fontSize: 16, fontWeight: "700" },
+  timeLoaderBox: { flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 30 },
+  timeLoaderText: { marginLeft: 10, color: "#777", fontSize: 13 },
   timeGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between" },
   timeBox: {
     width: "47%", height: 45, borderWidth: 1, borderColor: "#FF2D75", borderRadius: 10,

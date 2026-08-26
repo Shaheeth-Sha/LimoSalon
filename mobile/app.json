@@ -49,7 +49,14 @@
           "enableGooglePay": true
         }
       ],
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow LimoSalon to access your photos to set a profile picture.",
+          "cameraPermission": "Allow LimoSalon to use the camera to take a profile picture."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

@@ -22,7 +22,7 @@ import {
   useRouter,
 } from "expo-router";
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 
 // Fixed: this used to be hardcoded to `?category=Hair`, so every
 // booking flow — regardless of the actual service category selected
@@ -132,6 +132,17 @@ export default function Staff() {
     selectedTime,
     totalAmount,
     bookingType,
+    // Only ever present on the "Change Artist" path from
+    // reviewBooking.tsx — carried straight through untouched so
+    // nothing already answered gets lost when we jump back to Review.
+    wantsTrialMakeup,
+    trialMakeupDate,
+    trialMakeupTime,
+    trialHoldId,
+    trialHoldExpiresAt,
+    trialHoldExpiresInSeconds,
+    notes,
+    editMode,
   } = useLocalSearchParams();
 
   const selectedServicesText =
@@ -151,6 +162,30 @@ export default function Staff() {
 
   const bookingTypeText =
     getParamValue(bookingType);
+
+  const wantsTrialMakeupText =
+    getParamValue(wantsTrialMakeup);
+
+  const trialMakeupDateText =
+    getParamValue(trialMakeupDate);
+
+  const trialMakeupTimeText =
+    getParamValue(trialMakeupTime);
+
+  const trialHoldIdText =
+    getParamValue(trialHoldId);
+
+  const trialHoldExpiresAtText =
+    getParamValue(trialHoldExpiresAt);
+
+  const trialHoldExpiresInSecondsText =
+    getParamValue(trialHoldExpiresInSeconds);
+
+  const notesText =
+    getParamValue(notes);
+
+  const isEditMode =
+    getParamValue(editMode) === "true";
 
   const services = useMemo(
     () =>
@@ -213,8 +248,26 @@ export default function Staff() {
   const isHairFlow =
     bookingTypeText.toLowerCase() === "hair";
 
-  const totalSteps = isHairFlow ? 5 : 4;
-  const currentStep = isHairFlow ? 4 : 3;
+  // Nail also has an extra step (its "Choose Style" screen), so it
+  // needs the same 5-step count AND the same small-dot styling as
+  // Hair. Fixed: previously this same condition only drove the step
+  // COUNT below, while the dot SIZE styling further down in the JSX
+  // still checked `!isHairFlow` alone — meaning Nail correctly showed
+  // 5 steps, but with the larger Body/Face/Bridal-style dots instead
+  // of matching Hair's smaller ones. Reusing this single flag for
+  // both now keeps them in sync permanently.
+  const hasExtraStep =
+    isHairFlow || bookingTypeText.toLowerCase() === "nail";
+
+  const totalSteps = hasExtraStep ? 5 : 4;
+  const currentStep = hasExtraStep ? 4 : 3;
+
+  // Bridal has its own dedicated screen-by-screen flow (Event Date,
+  // Event Time, Trial Makeup, Review Booking, ...) with no shared
+  // "step X of Y" concept across it, so the generic progress dots
+  // (designed for the hair/face/body/nail wizard) don't apply here.
+  const isBridalFlow =
+    bookingTypeText.trim().toLowerCase() === "bridal";
 
   const realStaffList = useMemo(
     () =>
@@ -679,6 +732,11 @@ export default function Staff() {
               selectedTime:
                 selectedTimeText,
               estimatedDuration,
+              // Only ever set on the "Change Artist" edit path —
+              // protects an already-reserved trial hold from being
+              // wiped out by this hold's cleanup step.
+              keepHoldId:
+                trialHoldIdText || undefined,
             }),
           }
         );
@@ -702,9 +760,31 @@ export default function Staff() {
           );
         }
 
-        router.push({
-          pathname:
-            "/(customer)/(services)/confirm",
+        // Bridal bookings get an extra trial-makeup / notes mini-flow
+        // (trialMakeup.tsx -> [trialMakeupDate.tsx] -> [additionalNotes.tsx])
+        // before landing on confirm.tsx — every other booking type
+        // goes straight to confirm.tsx exactly as before. The params
+        // object is identical either way; only the destination route
+        // changes, since the trial screens simply forward these same
+        // params on to confirm.tsx once they're done.
+        //
+        // "Change Artist" from reviewBooking.tsx arrives here with
+        // isEditMode=true — the trial-makeup answers are already
+        // collected, so skip straight back to reviewBooking.tsx
+        // instead of re-asking about the trial makeup again.
+        const isBridalBooking =
+          bookingTypeText.trim().toLowerCase() === "bridal";
+
+        const destination = isEditMode
+          ? "/(customer)/(services)/reviewBooking"
+          : isBridalBooking
+            ? "/(customer)/(services)/trialMakeup"
+            : "/(customer)/(services)/confirm";
+
+        const navigate = isEditMode ? router.replace : router.push;
+
+        navigate({
+          pathname: destination,
           params: {
             selectedServices:
               selectedServicesText,
@@ -749,6 +829,16 @@ export default function Staff() {
                 data.hold
                   .expiresInSeconds
               ),
+
+            ...(isEditMode && {
+              wantsTrialMakeup: wantsTrialMakeupText,
+              trialMakeupDate: trialMakeupDateText,
+              trialMakeupTime: trialMakeupTimeText,
+              trialHoldId: trialHoldIdText,
+              trialHoldExpiresAt: trialHoldExpiresAtText,
+              trialHoldExpiresInSeconds: trialHoldExpiresInSecondsText,
+              notes: notesText,
+            }),
           },
         });
       } catch (error) {
@@ -793,6 +883,7 @@ export default function Staff() {
         </Text>
       </View>
 
+      {!isBridalFlow && (
       <View style={styles.stepContainer}>
         <View style={styles.stepRow}>
           {Array.from(
@@ -819,7 +910,7 @@ export default function Staff() {
                 <View
                   style={[
                     styles.stepCircle,
-                    !isHairFlow &&
+                    !hasExtraStep &&
                       styles.bodyStepCircle,
                     isDone &&
                       styles.stepDone,
@@ -841,7 +932,7 @@ export default function Staff() {
                   <View
                     style={[
                       styles.stepLine,
-                      !isHairFlow &&
+                      !hasExtraStep &&
                         styles.bodyStepLine,
                     ]}
                   />
@@ -851,13 +942,14 @@ export default function Staff() {
           })}
         </View>
       </View>
+      )}
 
       <View style={styles.detailsBox}>
         <View style={styles.detailRow}>
           <Ionicons
             name="calendar-outline"
             size={18}
-            color="#FF2D55"
+            color="#FF2D75"
           />
 
           <Text style={styles.detailText}>
@@ -875,7 +967,7 @@ export default function Staff() {
           <Ionicons
             name="time-outline"
             size={18}
-            color="#FF2D55"
+            color="#FF2D75"
           />
 
           <Text style={styles.detailText}>
@@ -887,7 +979,7 @@ export default function Staff() {
           <Ionicons
             name="hourglass-outline"
             size={18}
-            color="#FF2D55"
+            color="#FF2D75"
           />
 
           <Text style={styles.detailText}>
@@ -900,7 +992,7 @@ export default function Staff() {
         <View style={styles.loaderBox}>
           <ActivityIndicator
             size="large"
-            color="#FF2D55"
+            color="#FF2D75"
           />
 
           <Text style={styles.loaderText}>
@@ -920,7 +1012,7 @@ export default function Staff() {
               onRefresh={
                 handleRefresh
               }
-              colors={["#FF2D55"]}
+              colors={["#FF2D75"]}
             />
           }
           contentContainerStyle={
@@ -1196,11 +1288,11 @@ const styles = StyleSheet.create({
   },
 
   stepDone: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
   },
 
   stepActive: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
   },
 
   stepLine: {
@@ -1269,7 +1361,7 @@ const styles = StyleSheet.create({
   },
 
   staffActive: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
     borderColor: "#B90943",
   },
 
@@ -1347,7 +1439,7 @@ const styles = StyleSheet.create({
   radioActive: {
     backgroundColor: "#FFFFFF",
     borderWidth: 4,
-    borderColor: "#FF2D55",
+    borderColor: "#FF2D75",
   },
 
   noAvailabilityBox: {
@@ -1387,7 +1479,7 @@ const styles = StyleSheet.create({
   },
 
   continue: {
-    backgroundColor: "#FF2D55",
+    backgroundColor: "#FF2D75",
     padding: 14,
     borderRadius: 25,
     alignItems: "center",

@@ -1,194 +1,226 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, TextInput, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import AlertModal, { AlertType } from '../../components/AlertModal';
+import { BASE_URL } from '../../config/api';
+
+const FORGOT_API = `${BASE_URL}/api/staff/forgot-password`;
 
 export default function ForgotPassword() {
-  const [email, setEmail] = useState('');
   const router = useRouter();
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const [alert, setAlert] = useState<{ visible: boolean; type: AlertType; title: string; message: string }>({
+    visible: false,
+    type: 'error',
+    title: '',
+    message: '',
+  });
+
+  const showAlert = (type: AlertType, title: string, message: string) =>
+    setAlert({ visible: true, type, title, message });
+
+  const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
+
+  const handleSendCode = async () => {
+    if (loading) return;
+
+    if (!email.trim()) {
+      showAlert('error', 'Missing Email', 'Please enter your registered email.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+
+      const res = await fetch(FORGOT_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showAlert('error', 'Something Went Wrong', data.message || 'Please try again');
+        return;
+      }
+
+      router.push({ pathname: '/email', params: { email: normalizedEmail } });
+    } catch (error: any) {
+      showAlert('error', 'Something Went Wrong', String(error?.message || error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.mainContainer}
-    >
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
-        {/* --- උඩ පස රවුම් වක්‍රය (Top Curve) --- */}
-        <View style={styles.topCurvedSection} />
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={styles.card}>
 
-        {/* --- ප්‍රධාන Content Area --- */}
-        <View style={styles.contentContainer}>
-          
-          {/* 1. LIMO SALON Logo එක සහ නම */}
-          <View style={styles.logoRow}>
-            <View style={styles.logoIconBg}>
-              <Ionicons name="cut" size={35} color="white" /> 
-            </View>
-            <View style={styles.logoTextCol}>
-              <Text style={styles.logoTextTop}>LIMO</Text>
-              <Text style={styles.logoTextBottom}>SALON</Text>
-            </View>
-          </View>
-
-          {/* 2. මාතෘකාව (Fogot Password) */}
-          <Text style={styles.titleText}>Fogot Password</Text>
-          <Text style={styles.subtitleText}>Enter your registered email</Text>
-
-          {/* 3. Email Input එක */}
-          <View style={styles.inputWrapper}>
-            <TextInput
-              style={styles.textInput}
-              placeholder="Email"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              placeholderTextColor="#A0A0A0"
-            />
-          </View>
-
-          {/* 4. Send Reset Link Button එක */}
-          <TouchableOpacity style={styles.resetButton}>
-            <Text style={styles.resetButtonText}>Send Reset link</Text>
-          </TouchableOpacity>
-
-          {/* 5. Back to Login Button එක */}
-          <TouchableOpacity 
-            style={styles.backToLoginWrapper}
-            onPress={() => router.back()} // පරණ ලොගින් පේජ් එකට ආපහු යන්න
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backArrow}
+            onPress={() => router.back()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
-            <Text style={styles.backToLoginText}>Back to Login</Text>
+            <Feather name="chevron-left" size={26} color="#111" />
           </TouchableOpacity>
-
+          <Text style={styles.headerTitle}>Forgot Password</Text>
+          <View style={styles.headerSpacer} />
         </View>
 
-        {/* --- යට පස රවුම් වක්‍රය (Bottom Curve) --- */}
-        <View style={styles.bottomCurvedSection} />
+        <View style={styles.logoRow}>
+          <Image source={require('../../assets/staff-img/logo.png')} style={styles.logo} />
+          <Text style={styles.logoText}>LIMO{'\n'}SALON</Text>
+        </View>
 
-      </ScrollView>
-    </KeyboardAvoidingView>
+        <Text style={styles.subheading}>
+          Enter your registered email and we'll send you a 6-digit verification code
+        </Text>
+
+        <View style={styles.form}>
+          <Text style={styles.label}>Email</Text>
+          <TextInput
+            style={styles.input}
+            value={email}
+            onChangeText={(text) => setEmail(text.toLowerCase())}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            placeholder="you@example.com"
+            placeholderTextColor="#999"
+          />
+
+          <TouchableOpacity
+            style={[styles.sendBtn, loading && styles.sendBtnDisabled]}
+            onPress={handleSendCode}
+            activeOpacity={0.8}
+            disabled={loading}
+          >
+            <Text style={styles.sendText}>{loading ? 'Sending...' : 'Send Verification Code'}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity onPress={() => router.replace('/')} style={styles.backToLoginWrapper}>
+            <Text style={styles.backToLoginText}>Back to Login</Text>
+          </TouchableOpacity>
+        </View>
+
+      </View>
+
+      <AlertModal
+        visible={alert.visible}
+        type={alert.type}
+        title={alert.title}
+        message={alert.message}
+        onClose={closeAlert}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  mainContainer: {
+  container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#fff',
   },
-  scrollContent: {
-    flexGrow: 1,
+  card: {
+    flex: 1,
+    backgroundColor: '#fff',
+    paddingTop: 8,
+    paddingHorizontal: 24,
+  },
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 32,
+  },
+  backArrow: {
+    width: 36,
+    height: 36,
     justifyContent: 'center',
-    paddingVertical: 100, 
-    position: 'relative',
-    backgroundColor: '#FFFFFF',
+    alignItems: 'flex-start',
   },
-  // `staff forgot.png` එකේ තියෙන විදිහටම රවුම් හැඩතල (Curves) දෙක
-  topCurvedSection: {
-    position: 'absolute',
-    top: -120,
-    width: 550, 
-    height: 220,
-    backgroundColor: '#FF1462', 
-    borderRadius: 275, 
-    zIndex: 0,
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111',
   },
-  bottomCurvedSection: {
-    position: 'absolute',
-    bottom: -120,
-    width: 550,
-    height: 220,
-    backgroundColor: '#FF1462',
-    borderRadius: 275,
-    zIndex: 0,
-  },
-  contentContainer: {
-    width: '85%',
-    maxWidth: 340,
-    alignItems: 'center',
-    zIndex: 1,
+  headerSpacer: {
+    width: 36,
   },
   logoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 40, // මාතෘකාවට ටිකක් ඉඩ තැබීමට
+    alignSelf: 'center',
+    marginBottom: 20,
   },
-  logoIconBg: {
-    width: 60,
-    height: 60,
-    backgroundColor: '#FF1462',
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+  logo: {
+    width: 65,
+    height: 65,
+    marginRight: 10,
   },
-  logoTextCol: {
-    justifyContent: 'center',
-  },
-  logoTextTop: {
-    fontSize: 24,
+  logoText: {
+    fontSize: 18,
+    fontWeight: 'bold',
     color: '#FF1462',
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    lineHeight: 26,
+    lineHeight: 22,
   },
-  logoTextBottom: {
-    fontSize: 24,
-    color: '#FF1462',
-    fontWeight: 'bold',
-    letterSpacing: 1,
-    lineHeight: 26,
-  },
-  titleText: {
-    fontSize: 26,
-    color: '#000000',
-    fontWeight: 'bold',
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif', // Image එකේ තියෙන Serif Font එකට සමාන පෙනුමක් ලබා දීමට
-    marginBottom: 10,
-  },
-  subtitleText: {
-    fontSize: 16,
-    color: '#6E6E6E',
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
-    marginBottom: 35,
+  subheading: {
+    fontSize: 13,
+    color: '#777',
+    lineHeight: 19,
     textAlign: 'center',
+    marginBottom: 32,
   },
-  inputWrapper: {
+  form: {
     width: '100%',
-    height: 50,
-    borderWidth: 1,
-    borderColor: '#DCDCDC',
-    borderRadius: 10,
-    marginBottom: 35,
-    paddingHorizontal: 15,
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
   },
-  textInput: {
-    fontSize: 15,
-    color: '#000000',
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
   },
-  resetButton: {
+  input: {
     width: '100%',
-    height: 50,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    fontSize: 14,
+    marginBottom: 28,
+  },
+  sendBtn: {
+    width: '100%',
     backgroundColor: '#FF1462',
-    borderRadius: 10,
-    justifyContent: 'center',
+    paddingVertical: 15,
+    borderRadius: 25,
     alignItems: 'center',
-    marginBottom: 25,
+    justifyContent: 'center',
   },
-  resetButtonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
+  sendBtnDisabled: {
+    opacity: 0.6,
+  },
+  sendText: {
+    color: '#fff',
     fontWeight: 'bold',
+    fontSize: 15,
   },
   backToLoginWrapper: {
-    padding: 10,
+    alignSelf: 'center',
+    marginTop: 20,
+    padding: 8,
   },
   backToLoginText: {
-    color: '#000000',
-    fontSize: 16,
+    color: '#111',
+    fontSize: 14,
     fontWeight: '500',
   },
 });

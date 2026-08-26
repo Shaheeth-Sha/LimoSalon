@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 
@@ -7,39 +8,68 @@ export default function ResetSuccessfully() {
   const router = useRouter();
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.mainContainer}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        <View style={styles.topCurvedSection} />
-
-        <View style={styles.contentContainer}>
-          {/* සාර්ථක සලකුණ (Success Check Icon) */}
-          <View style={styles.iconContainer}>
-            <Feather name="check-circle" size={120} color="#000000" />
-          </View>
-
-          <Text style={styles.titleText}>Password Reset Successfully</Text>
-          <Text style={styles.subtitleText}>Your password has been updated{"\n"}successfully.</Text>
-
-          <TouchableOpacity style={styles.button} onPress={() => router.replace('/')}>
-            <Text style={styles.buttonText}>Back to Login</Text>
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <View style={styles.card}>
+        <View style={styles.iconContainer}>
+          <Feather name="check-circle" size={90} color="#FF1462" />
         </View>
 
-        <View style={styles.bottomCurvedSection} />
-      </ScrollView>
-    </KeyboardAvoidingView>
+        <Text style={styles.titleText}>Password Reset Successfully</Text>
+        <Text style={styles.subtitleText}>Your password has been updated.{'\n'}You can now log in with it.</Text>
+
+        <TouchableOpacity style={styles.button} onPress={() => router.replace('/')} activeOpacity={0.8}>
+          <Text style={styles.buttonText}>Back to Login</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  mainContainer: { flex: 1, backgroundColor: '#FFFFFF' },
-  scrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 100, position: 'relative' },
-  topCurvedSection: { position: 'absolute', top: -120, width: 550, height: 220, backgroundColor: '#FF1462', borderRadius: 275 },
-  bottomCurvedSection: { position: 'absolute', bottom: -120, width: 550, height: 220, backgroundColor: '#FF1462', borderRadius: 275 },
-  contentContainer: { width: '85%', maxWidth: 340, alignItems: 'center' },
-  iconContainer: { marginBottom: 40 },
-  titleText: { fontSize: 24, color: '#000000', fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-  subtitleText: { fontSize: 16, color: '#000000', marginBottom: 40, textAlign: 'center', lineHeight: 22 },
-  button: { width: '100%', height: 50, backgroundColor: '#FF1462', borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
-  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  card: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+  },
+  iconContainer: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#FDE4ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  titleText: {
+    fontSize: 20,
+    color: '#111',
+    fontWeight: 'bold',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  subtitleText: {
+    fontSize: 14,
+    color: '#777',
+    marginBottom: 36,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  button: {
+    width: '100%',
+    backgroundColor: '#FF1462',
+    paddingVertical: 15,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  buttonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
 });

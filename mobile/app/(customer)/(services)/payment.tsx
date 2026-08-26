@@ -20,13 +20,19 @@ import {
 } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BASE_URL } from "../../../config/api";
 
 const BOOKING_API =
-  "http://10.0.2.2:5000/api/bookings";
+  `${BASE_URL}/api/bookings`;
 
 const NON_BRIDAL_ADVANCE_MINIMUM = 10000;
 const BRIDAL_ADVANCE_RATE = 0.2;
 const OTHER_ADVANCE_RATE = 0.1;
+
+// Match the backend's HOLD_DURATION_MINUTES / TRIAL_MAKEUP_DURATION_MINUTES
+// — used only to clamp the displayed countdown, see resolveDeadline below.
+const HOLD_DURATION_SECONDS = 10 * 60;
+const TRIAL_MAKEUP_DURATION_SECONDS = 60 * 60;
 
 type PaymentMethod = "" | "card" | "salon";
 
@@ -158,8 +164,17 @@ export default function Payment() {
   // the same services/hair length/booking type already chosen — only
   // date, time, and staff need reselecting since the hold expired.
   const goReselectDateTime = () => {
+    // Bridal no longer uses the combined dateTime.tsx picker — it has
+    // its own Event Date / Event Time screens, so an expired hold
+    // needs to send bridal customers back to eventDate.tsx instead,
+    // or this would 404.
+    const isBridalBooking =
+      bookingTypeText.trim().toLowerCase() === "bridal";
+
     router.replace({
-      pathname: "/(customer)/(services)/dateTime",
+      pathname: isBridalBooking
+        ? "/(customer)/(services)/eventDate"
+        : "/(customer)/(services)/dateTime",
       params: {
         selectedServices: selectedServicesText,
         selectedLength: selectedLengthText,
@@ -181,6 +196,13 @@ export default function Payment() {
     holdId,
     holdExpiresAt,
     holdExpiresInSeconds,
+    wantsTrialMakeup,
+    trialMakeupDate,
+    trialMakeupTime,
+    trialHoldId,
+    trialHoldExpiresAt,
+    trialHoldExpiresInSeconds,
+    notes,
   } = useLocalSearchParams();
 
   const selectedServicesText = getParamValue(selectedServices);
@@ -194,6 +216,15 @@ export default function Payment() {
   const holdIdText = getParamValue(holdId);
   const holdExpiresAtText = getParamValue(holdExpiresAt);
   const holdExpiresInSecondsText = getParamValue(holdExpiresInSeconds);
+  // Bridal-only, carried through from confirm.tsx unchanged.
+  const wantsTrialMakeupText = getParamValue(wantsTrialMakeup);
+  const trialMakeupDateText = getParamValue(trialMakeupDate);
+  const trialMakeupTimeText = getParamValue(trialMakeupTime);
+  const trialHoldIdText = getParamValue(trialHoldId);
+  const trialHoldExpiresAtText = getParamValue(trialHoldExpiresAt);
+  const trialHoldExpiresInSecondsText = getParamValue(trialHoldExpiresInSeconds);
+  const notesText = getParamValue(notes);
+  const trialSlotReserved = wantsTrialMakeupText === "true" && Boolean(trialHoldIdText);
 
   const [paymentMethod, setPaymentMethod] =
     useState<PaymentMethod>("");
@@ -279,21 +310,64 @@ export default function Payment() {
   // how long the gap was or whether any ticks were missed, the very
   // next read (including the one triggered immediately on refocus,
   // below) is instantly correct.
+  // Fixed: this used to trust expiresInSeconds (a plain duration, not
+  // a point in time) over expiresAt (a fixed clock time). Every
+  // screen between the hold's actual creation and here that doesn't
+  // run its own countdown just forwards that duration unchanged, so
+  // recomputing "now + that duration" on arrival here silently pushed
+  // the apparent deadline later the longer the customer spent
+  // browsing earlier screens — showing time remaining even after the
+  // real, unmoving server-side expiresAt had already passed. That's
+  // exactly the "still shows time left, then hold expired at payment"
+  // bug — expiresAt has to win whenever it's present.
+  const resolveDeadline = (
+    expiresInSecondsText: string,
+    expiresAtText: string,
+    maxDurationSeconds: number
+  ): number | null => {
+    if (expiresAtText) {
+      const expiryTime = new Date(expiresAtText).getTime();
+
+      // A few seconds of clock skew between this device and the
+      // server (common enough on emulators) can make the server's
+      // absolute expiresAt look slightly MORE than the real hold
+      // duration away from this device's own clock — showing "10:01"
+      // instead of "10:00". A hold can never legitimately have more
+      // than maxDurationSeconds left from right now, so cap it there.
+      if (!Number.isNaN(expiryTime)) {
+        return Math.min(expiryTime, Date.now() + maxDurationSeconds * 1000);
+      }
+    }
+
+    const suppliedSeconds = Number(expiresInSecondsText);
+
+    if (Number.isFinite(suppliedSeconds) && suppliedSeconds > 0) {
+      return Date.now() + suppliedSeconds * 1000;
+    }
+
+    return null;
+  };
+
   const deadlineRef = useRef<number | null>(null);
 
   if (deadlineRef.current === null) {
-    const suppliedSeconds = Number(holdExpiresInSecondsText);
+    const mainDeadline =
+      resolveDeadline(holdExpiresInSecondsText, holdExpiresAtText, HOLD_DURATION_SECONDS) ??
+      Date.now();
 
-    if (Number.isFinite(suppliedSeconds) && suppliedSeconds > 0) {
-      deadlineRef.current = Date.now() + suppliedSeconds * 1000;
-    } else if (holdExpiresAtText) {
-      const expiryTime = new Date(holdExpiresAtText).getTime();
-      deadlineRef.current = Number.isNaN(expiryTime)
-        ? Date.now()
-        : expiryTime;
-    } else {
-      deadlineRef.current = Date.now();
-    }
+    // Bridal only: whichever of the main event slot and the trial
+    // makeup slot expires first drives this single countdown — both
+    // are real reservations that need to still be valid at checkout.
+    const trialDeadline = trialSlotReserved
+      ? resolveDeadline(
+          trialHoldExpiresInSecondsText,
+          trialHoldExpiresAtText,
+          TRIAL_MAKEUP_DURATION_SECONDS
+        )
+      : null;
+
+    deadlineRef.current =
+      trialDeadline !== null ? Math.min(mainDeadline, trialDeadline) : mainDeadline;
   }
 
   const computeRemainingSeconds = () =>
@@ -470,6 +544,14 @@ export default function Payment() {
           bookingType: bookingTypeText,
           paymentOption: "salon",
           paymentMethod: "Pay at Salon",
+          // Only ever meaningfully set for bridal bookings (pay-at-salon
+          // isn't even offered to bridal, but forwarding unconditionally
+          // keeps this call consistent with cardPayment.tsx's body).
+          wantsTrialMakeup: wantsTrialMakeupText === "true",
+          trialMakeupDate: trialMakeupDateText,
+          trialMakeupTime: trialMakeupTimeText,
+          trialHoldId: trialHoldIdText,
+          notes: notesText,
         }),
       });
 
@@ -494,6 +576,7 @@ export default function Payment() {
           selectedDate: selectedDateText,
           selectedTime: selectedTimeText,
           selectedStaff: selectedStaffText,
+          bookingType: bookingTypeText,
           totalAmount: String(createdBooking?.totalAmount ?? total),
           advancePayment: String(
             createdBooking?.advancePayment ?? 0
@@ -513,6 +596,12 @@ export default function Payment() {
             createdBooking?.paymentStatus || "Pending",
           transactionReference:
             createdBooking?.transactionReference || "",
+          // Bridal-only — read back from the saved booking rather than
+          // the raw params, so bookingSuccess.tsx shows exactly what
+          // was actually persisted.
+          wantsTrialMakeup: String(Boolean(createdBooking?.wantsTrialMakeup)),
+          trialMakeupDate: createdBooking?.trialMakeupDate || "",
+          trialMakeupTime: createdBooking?.trialMakeupTime || "",
         },
       });
     } catch (error) {
@@ -563,6 +652,11 @@ export default function Payment() {
         advancePayment: String(advancePayment),
         paymentRequired: String(advanceAvailable),
         paymentMethod: "Credit/Debit Card",
+        wantsTrialMakeup: wantsTrialMakeupText,
+        trialMakeupDate: trialMakeupDateText,
+        trialMakeupTime: trialMakeupTimeText,
+        trialHoldId: trialHoldIdText,
+        notes: notesText,
       },
     });
   };

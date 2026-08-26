@@ -15,13 +15,26 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 
 const SERVICES_API =
   `${BASE_URL}/api/services?category=Bridal`;
+
+// Only used on the "Change Package" edit path from reviewBooking.tsx
+// — mirrors the same hold call staff.tsx/eventTime.tsx already make.
+const HOLD_API =
+  `${BASE_URL}/api/bookings/hold`;
+
+const getParamValue = (
+  value: string | string[] | undefined
+): string => {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+};
 
 
 
@@ -40,6 +53,37 @@ export default function BridalDressing() {
 
 
   const router = useRouter();
+
+  const params = useLocalSearchParams();
+
+  // Only ever populated on the "Change Package" path from
+  // reviewBooking.tsx — every other field the review screen already
+  // knows about, carried through untouched so nothing already
+  // answered (date, time, staff, trial info) gets lost.
+  const editMode = getParamValue(params.editMode) === "true";
+  const editSelectedDate = getParamValue(params.selectedDate);
+  const editSelectedTime = getParamValue(params.selectedTime);
+  const editSelectedStaff = getParamValue(params.selectedStaff);
+  const editWantsTrialMakeup = getParamValue(params.wantsTrialMakeup);
+  const editTrialMakeupDate = getParamValue(params.trialMakeupDate);
+  const editTrialMakeupTime = getParamValue(params.trialMakeupTime);
+  const editTrialHoldId = getParamValue(params.trialHoldId);
+  const editTrialHoldExpiresAt = getParamValue(params.trialHoldExpiresAt);
+  const editTrialHoldExpiresInSeconds = getParamValue(params.trialHoldExpiresInSeconds);
+  const editNotes = getParamValue(params.notes);
+  const editPreviousServiceIds = useMemo(() => {
+    const raw = getParamValue(params.selectedServices);
+    if (!raw) return [] as string[];
+
+    try {
+      const parsed = JSON.parse(raw) as ServiceItem[];
+      return parsed.map((item) => item._id).filter(Boolean);
+    } catch {
+      return [] as string[];
+    }
+  }, [params.selectedServices]);
+
+  const [creatingHold, setCreatingHold] = useState(false);
 
 
   // Services loaded from database
@@ -130,6 +174,26 @@ export default function BridalDressing() {
 
 
 
+  // "Change Package" edit path: once the full service list has
+  // loaded, pre-select whatever was already chosen so the customer
+  // starts from their current picks instead of an empty list.
+  useEffect(() => {
+
+    if (!editMode || services.length === 0 || editPreviousServiceIds.length === 0) {
+      return;
+    }
+
+    setSelectedServices(
+      services.filter((item) =>
+        editPreviousServiceIds.includes(item._id)
+      )
+    );
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode, services]);
+
+
+
 
 
   /*
@@ -192,6 +256,219 @@ export default function BridalDressing() {
   }, [selectedServices]);
 
 
+
+  const estimatedDuration = useMemo(() => {
+
+    return selectedServices.reduce(
+      (sum, item) =>
+        sum + Number(item.duration || 0),
+      0
+    );
+
+  }, [selectedServices]);
+
+
+
+  const goToEventDate = (preselectedDate?: string) => {
+
+    router.push({
+
+      pathname:
+      "/(customer)/(services)/eventDate",
+
+      params:{
+
+        selectedServices:
+        JSON.stringify(
+          selectedServices
+        ),
+
+        selectedLength:
+        "",
+
+        totalAmount:
+        String(totalAmount),
+
+        bookingType:
+        "bridal",
+
+        ...(editMode && {
+
+          editMode: "true",
+
+          selectedDate:
+          preselectedDate || "",
+
+          selectedStaff:
+          editSelectedStaff,
+
+          estimatedDuration:
+          String(estimatedDuration),
+
+          wantsTrialMakeup:
+          editWantsTrialMakeup,
+
+          trialMakeupDate:
+          editTrialMakeupDate,
+
+          trialMakeupTime:
+          editTrialMakeupTime,
+
+          trialHoldId:
+          editTrialHoldId,
+
+          trialHoldExpiresAt:
+          editTrialHoldExpiresAt,
+
+          trialHoldExpiresInSeconds:
+          editTrialHoldExpiresInSeconds,
+
+          notes:
+          editNotes,
+
+        }),
+
+      },
+
+    });
+
+  };
+
+
+
+  // "Change Package" edit path: the customer already has a staff
+  // member and a date/time reserved — try to keep that exact slot by
+  // simply refreshing the hold with the new (possibly longer/shorter)
+  // service duration. Only if that slot no longer fits the new
+  // duration does this fall back to sending them through Event
+  // Date/Event Time to pick a new one — Continue still always lands
+  // them back on Review Booking either way, never staff.tsx or the
+  // trial-makeup screens again.
+  const handleEditContinue = async () => {
+
+    if (creatingHold) return;
+
+    setCreatingHold(true);
+
+    try {
+
+      const staff = JSON.parse(
+        editSelectedStaff || "{}"
+      );
+
+      const staffId = String(
+        staff.staffId || staff._id || ""
+      );
+
+      if (!staffId || !editSelectedDate || !editSelectedTime) {
+        Alert.alert(
+          "Missing Details",
+          "Your date, time, or staff selection is missing — please pick them again.",
+          [
+            {
+              text: "OK",
+              onPress: () => goToEventDate(),
+            },
+          ]
+        );
+        return;
+      }
+
+      const token =
+        await AsyncStorage.getItem("customerToken");
+
+      if (!token) {
+        Alert.alert("Login Required", "Please login again.");
+        return;
+      }
+
+      const response = await fetch(HOLD_API, {
+
+        method: "POST",
+
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          staffId,
+          selectedDate: editSelectedDate,
+          selectedTime: editSelectedTime,
+          estimatedDuration,
+          // Protects an already-reserved trial hold from being wiped
+          // out by this hold's cleanup step.
+          keepHoldId: editTrialHoldId || undefined,
+        }),
+
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.hold?.holdId) {
+
+        // The new package no longer fits the previously reserved
+        // slot (e.g. it now runs longer and overlaps another
+        // booking) — the only remaining option is to pick a new
+        // date/time, but the staff member and trial info are still
+        // carried forward so nothing else has to be redone.
+        Alert.alert(
+          "Time No Longer Available",
+          "Your previous date and time can't fit this updated package. Please choose a new date and time.",
+          [
+            {
+              text: "Choose New Time",
+              onPress: () => goToEventDate(editSelectedDate),
+            },
+          ]
+        );
+        return;
+      }
+
+      router.replace({
+
+        pathname:
+        "/(customer)/(services)/reviewBooking",
+
+        params: {
+          selectedServices: JSON.stringify(selectedServices),
+          selectedLength: "",
+          selectedDate: editSelectedDate,
+          selectedTime: editSelectedTime,
+          selectedStaff: editSelectedStaff,
+          totalAmount: String(totalAmount),
+          bookingType: "bridal",
+          estimatedDuration: String(estimatedDuration),
+          holdId: String(data.hold.holdId),
+          holdExpiresAt: String(data.hold.expiresAt),
+          holdExpiresInSeconds: String(data.hold.expiresInSeconds),
+          wantsTrialMakeup: editWantsTrialMakeup,
+          trialMakeupDate: editTrialMakeupDate,
+          trialMakeupTime: editTrialMakeupTime,
+          trialHoldId: editTrialHoldId,
+          trialHoldExpiresAt: editTrialHoldExpiresAt,
+          trialHoldExpiresInSeconds: editTrialHoldExpiresInSeconds,
+          notes: editNotes,
+        },
+
+      });
+
+    } catch (error) {
+
+      console.log("Package change hold refresh failed:", error);
+
+      Alert.alert(
+        "Connection Error",
+        "Unable to update your package right now. Please try again."
+      );
+
+    } finally {
+
+      setCreatingHold(false);
+
+    }
+
+  };
 
 
 
@@ -266,101 +543,12 @@ export default function BridalDressing() {
 
 
 
-      {/* STEP INDICATOR */}
-
-      <View style={styles.stepContainer}>
-
-
-        <Text style={styles.stepText}>
-          Select one or more services to book
-        </Text>
-
-
-
-
-        <View style={styles.stepRow}>
-
-
-          {[1,2,3,4].map(i => {
-
-
-            const isDone =
-              i === 1 &&
-              selectedServices.length > 0;
-
-
-
-            const isActive =
-              i === 1 &&
-              selectedServices.length === 0;
-
-
-
-
-            return (
-
-              <View
-                key={i}
-                style={styles.stepItem}
-              >
-
-
-                <View
-                  style={[
-                    styles.stepCircle,
-
-                    isDone &&
-                    styles.stepDone,
-
-                    isActive &&
-                    styles.stepActive,
-                  ]}
-                >
-
-
-                  {
-                    isDone &&
-                    (
-
-                      <Ionicons
-                        name="checkmark"
-                        size={10}
-                        color="#fff"
-                      />
-
-                    )
-                  }
-
-
-                </View>
-
-
-
-                {
-                  i !== 4 &&
-                  (
-
-                    <View
-                      style={styles.stepLine}
-                    />
-
-                  )
-                }
-
-
-
-              </View>
-
-            );
-
-
-          })}
-
-
-        </View>
-
-
-      </View>
+      {/* Bridal flow doesn't use the numbered step-indicator dots the
+          shared hair/face/body/nail flow uses — just the section
+          label. */}
+      <Text style={styles.stepText}>
+        Select one or more services to book
+      </Text>
 
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -477,14 +665,15 @@ export default function BridalDressing() {
         <TouchableOpacity
 
           disabled={
-            selectedServices.length === 0
+            selectedServices.length === 0 ||
+            creatingHold
           }
 
 
           style={[
             styles.continueBtn,
 
-            selectedServices.length === 0 &&
+            (selectedServices.length === 0 || creatingHold) &&
             {
               opacity:0.5
             }
@@ -494,47 +683,20 @@ export default function BridalDressing() {
 
 
           onPress={() =>
-
-            router.push({
-
-              pathname:
-              "/(customer)/(services)/dateTime",
-
-
-              params:{
-
-
-                selectedServices:
-                JSON.stringify(
-                  selectedServices
-                ),
-
-
-                selectedLength:
-                "",
-
-
-                totalAmount:
-                String(totalAmount),
-
-
-                bookingType:
-                "bridal",
-
-
-              },
-
-
-            })
-
-
+            editMode
+              ? handleEditContinue()
+              // Bridal gets its own Event Date / Event Time screens
+              // (matching the Figma flow) instead of the combined
+              // dateTime.tsx picker every other booking type still
+              // uses.
+              : goToEventDate()
           }
 
 
         >
 
           <Text style={styles.continueText}>
-            Continue
+            {creatingHold ? "Updating..." : "Continue"}
           </Text>
 
 
@@ -603,7 +765,7 @@ const styles = StyleSheet.create({
   stepText:{
     fontSize:13,
     color:"#777",
-    marginBottom:10,
+    marginBottom:18,
     textAlign:"center",
   },
 

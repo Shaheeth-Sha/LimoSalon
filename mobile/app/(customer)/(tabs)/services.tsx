@@ -15,7 +15,7 @@ import { Ionicons, Feather } from "@expo/vector-icons";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const BASE_URL = "http://10.0.2.2:5000";
+import { BASE_URL } from "../../../config/api";
 
 const CATEGORY_API = `${BASE_URL}/api/services`;
 const PROFILE_API = `${BASE_URL}/api/customers/profile`;
@@ -61,6 +61,12 @@ const categories: CategoryItem[] = [
     category: "Bridal",
     title: "Bridal Dressing",
     image: require("../../../assets/LimoImage/bridal.png"),
+  },
+
+  {
+    category: "Nail",
+    title: "Nail Care",
+    image: require("../../../assets/LimoImage/nail.png"),
   },
 ];
 
@@ -183,6 +189,10 @@ export default function Services() {
         route = "/(customer)/(services)/bridal";
         break;
 
+      case "Nail":
+        route = "/(customer)/(services)/nail";
+        break;
+
       default:
         return;
     }
@@ -220,7 +230,10 @@ export default function Services() {
 
   return (
     <View style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+      >
         {/* HEADER */}
         <View style={styles.header}>
           <Image
@@ -312,6 +325,16 @@ const styles = StyleSheet.create({
 
   header: {
     height: 260,
+  },
+
+  // FIX: the (tabs) layout renders its tab bar with position:
+  // "absolute" (see (tabs)/_layout.tsx), so it overlays the screen
+  // instead of reserving space — every tab screen must add its own
+  // bottom padding or content behind the tab bar becomes unreachable.
+  // This screen had none at all, so the grid's last row was cut off
+  // with no way to scroll to it once a 5th category card was added.
+  scrollContent: {
+    paddingBottom: 100,
   },
 
   headerImage: {
