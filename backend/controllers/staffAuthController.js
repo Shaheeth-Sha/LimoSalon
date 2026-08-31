@@ -1,5 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
 
 const Staff = require("../models/Staff");
 const EmailOtp = require("../models/EmailOtp");
@@ -42,6 +43,27 @@ const loginStaff = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Email and password are required",
+      });
+    }
+
+    // Fixed (per product decision, after a report of intermittent
+    // "Invalid email or password" errors on correct credentials): if
+    // the database connection is down or still reconnecting (e.g. a
+    // DNS/network blip to MongoDB Atlas), Staff.findOne below used to
+    // just hang until it timed out, at which point the query rejects
+    // and the outer catch reports a generic "Login failed" — but if a
+    // reconnect happens to land in a half-ready state, or a caller
+    // catches a slow buffered query as effectively "nothing found",
+    // it was easy to end up looking identical to a genuine wrong
+    // password from the app's point of view. Failing fast here with
+    // an honest, distinct message means a connectivity hiccup can
+    // never be mistaken for wrong credentials again — readyState 1 is
+    // "connected"; anything else (0 disconnected, 2 connecting, 3
+    // disconnecting) means the query below isn't safe to trust yet.
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({
+        success: false,
+        message: "Can't reach the database right now. Check your connection and try again in a moment.",
       });
     }
 

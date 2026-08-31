@@ -16,6 +16,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { BASE_URL } from "../../../config/api";
 import { groupBookingsByDate } from "../../../utils/groupBookingsByDate";
+import Avatar from "../../../components/Avatar";
 const MY_BOOKINGS_API = `${BASE_URL}/api/bookings/my-bookings`;
 const CANCEL_BOOKING_API = (bookingId: string) =>
   `${BASE_URL}/api/bookings/${bookingId}/cancel`;
@@ -25,7 +26,7 @@ const REVIEW_API = (bookingId: string) =>
 type Booking = {
   _id: string;
   services: { name: string }[];
-  staff: { name: string; staffId?: string };
+  staff: { name: string; staffId?: string; image?: string };
   estimatedDuration?: number;
   selectedDate: string;
   selectedTime: string;
@@ -233,6 +234,7 @@ export default function Bookings() {
   const getStatusPillStyle = (status: string) => {
     if (status === "Cancelled") return styles.cancelPill;
     if (status === "Completed") return styles.completedPill;
+    if (status === "No-show") return styles.noShowPill;
     // "Awaiting Completion" — a Confirmed appointment whose time has
     // passed but staff hasn't marked it done yet. Distinct from
     // "Pending" below (a brand new request the salon hasn't reviewed
@@ -407,7 +409,10 @@ export default function Bookings() {
 
                 <Text style={styles.title}>{serviceNames || "Service"}</Text>
                 {booking.staff?.name ? (
-                  <Text style={styles.sub}>With {booking.staff.name}</Text>
+                  <View style={styles.staffRow}>
+                    <Avatar uri={booking.staff.image} name={booking.staff.name} size={20} style={{ marginRight: 6 }} />
+                    <Text style={[styles.sub, { marginBottom: 0 }]}>With {booking.staff.name}</Text>
+                  </View>
                 ) : null}
 
                 {/* Shows when this booking has been moved at
@@ -753,6 +758,12 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
 
+  staffRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+
   rescheduledBadge: {
     flexDirection: "row",
     alignItems: "center",
@@ -826,6 +837,14 @@ const styles = StyleSheet.create({
 
   cancelPill: {
     backgroundColor: "#eee",
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: "flex-start",
+  },
+
+  noShowPill: {
+    backgroundColor: "#FBE9D2",
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,

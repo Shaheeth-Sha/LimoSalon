@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BASE_URL } from "../../../config/api";
+import Avatar from "../../../components/Avatar";
 
 const PROFILE_API = `${BASE_URL}/api/customers/profile`;
 const MY_BOOKINGS_API = `${BASE_URL}/api/bookings/my-bookings`;
@@ -30,7 +31,7 @@ type AlertState = {
 type Booking = {
   _id: string;
   services: { name: string }[];
-  staff: { name: string };
+  staff: { name: string; image?: string };
   selectedDate: string;
   selectedTime: string;
   status: string;
@@ -406,7 +407,10 @@ export default function Home() {
                 "Service"}
             </Text>
             {nextBooking.staff?.name ? (
-              <Text style={styles.staff}>With {nextBooking.staff.name}</Text>
+              <View style={styles.staffRow}>
+                <Avatar uri={nextBooking.staff.image} name={nextBooking.staff.name} size={20} style={{ marginRight: 6 }} />
+                <Text style={styles.staff}>With {nextBooking.staff.name}</Text>
+              </View>
             ) : null}
 
             <View style={styles.dateRow}>
@@ -690,6 +694,10 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
+  staffRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   staff: {
     color: "#666",
     fontSize: 16,

@@ -33,6 +33,7 @@ type StaffItem = {
   staffId?: string;
   name?: string;
   role?: string;
+  image?: string;
 };
 
 const NON_BRIDAL_ADVANCE_MINIMUM = 10000;

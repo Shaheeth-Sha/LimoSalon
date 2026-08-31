@@ -32,6 +32,7 @@ type StaffItem = {
   staffId?: string;
   name?: string;
   role?: string;
+  image?: string;
 };
 
 // Match the backend's HOLD_DURATION_MINUTES / TRIAL_MAKEUP_DURATION_MINUTES
@@ -457,7 +458,12 @@ export default function ReviewBooking() {
               onChange={handleChangeTrialTime}
             />
           ) : null}
-          <Row label="Artist" value={staff?.name || "-"} onChange={handleChangeArtist} last />
+          <Row
+            label="Artist"
+            value={staff?.name || "-"}
+            onChange={handleChangeArtist}
+            last
+          />
 
           {notesText ? (
             <View style={styles.notesBox}>
@@ -508,16 +514,19 @@ function Row({
   value,
   onChange,
   last,
+  icon,
 }: {
   label: string;
   value: string;
   onChange: () => void;
   last?: boolean;
+  icon?: React.ReactNode;
 }) {
   return (
     <View style={[rowStyles.row, last && rowStyles.rowLast]}>
       <Text style={rowStyles.label}>{label}</Text>
       <View style={rowStyles.right}>
+        {icon}
         <Text style={rowStyles.value}>{value}</Text>
         <TouchableOpacity onPress={onChange} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <Text style={rowStyles.change}>Change</Text>

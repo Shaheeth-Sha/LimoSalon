@@ -2,24 +2,26 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../config/api';
+import Avatar from '../../components/Avatar';
 
 const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
 
 type Booking = {
   _id: string;
-  customer?: { name?: string };
+  customer?: { name?: string; avatar?: string };
   services: { name: string }[];
   selectedDate: string;
   selectedTime: string;
+  estimatedDuration?: number;
   totalAmount: number;
   status: string;
   isPast: boolean;
 };
 
-type FilterTab = 'all' | 'Completed' | 'Cancelled';
+type FilterTab = 'all' | 'Completed' | 'Cancelled' | 'No-show';
 
 const formatDisplayDate = (dateStr: string): string => {
   try {
@@ -36,11 +38,21 @@ const formatDisplayDate = (dateStr: string): string => {
 const statusColor = (status: string) => {
   if (status === 'Completed') return { bg: '#E4F7E9', text: '#1E8A3C' };
   if (status === 'Cancelled') return { bg: '#FBE4E4', text: '#C13333' };
+  if (status === 'No-show') return { bg: '#FBE9D2', text: '#B9791F' };
   return { bg: '#FDE4ED', text: '#FF1462' };
 };
 
 export default function AppointmentHistory() {
   const router = useRouter();
+  // Optional — set when this screen is reached via a specific
+  // customer's "View Appointment History" button (Customer Profile /
+  // Top Customer). Left unset for the general "my appointment
+  // history" entry point from home.tsx, which keeps showing every
+  // customer exactly as before.
+  const { customerId, customerName } = useLocalSearchParams<{
+    customerId?: string;
+    customerName?: string;
+  }>();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -54,7 +66,11 @@ export default function AppointmentHistory() {
         return;
       }
 
-      const res = await fetch(MY_BOOKINGS_API, {
+      const url = customerId
+        ? `${MY_BOOKINGS_API}?customerId=${encodeURIComponent(customerId)}`
+        : MY_BOOKINGS_API;
+
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
@@ -72,7 +88,7 @@ export default function AppointmentHistory() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [router]);
+  }, [router, customerId]);
 
   useEffect(() => {
     load();
@@ -89,14 +105,16 @@ export default function AppointmentHistory() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Feather name="chevron-left" size={26} color="#111" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Appointment History</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {customerName ? `${customerName}'s History` : 'Appointment History'}
+        </Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.tabRow}>
-        {(['all', 'Completed', 'Cancelled'] as FilterTab[]).map((tab) => (
+        {(['all', 'Completed', 'Cancelled', 'No-show'] as FilterTab[]).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[styles.tabBtn, filter === tab && styles.tabBtnActive]}
@@ -144,12 +162,24 @@ export default function AppointmentHistory() {
                         date: b.selectedDate,
                         time: b.selectedTime,
                         status: b.status,
+                        estimatedDuration: String(b.estimatedDuration || 0),
+                        customerAvatar: b.customer?.avatar || '',
                       },
                     })
                   }
                 >
                   <View style={styles.cardTop}>
-                    <Text style={styles.name} numberOfLines={1}>{b.customer?.name || 'Customer'}</Text>
+                    <View style={styles.nameRow}>
+                      <Avatar
+                        uri={b.customer?.avatar}
+                        name={b.customer?.name || 'Customer'}
+                        size={32}
+                        fallbackColor="#FFE1EC"
+                        style={{ marginRight: 8 }}
+                        textStyle={{ color: '#FF1462' }}
+                      />
+                      <Text style={styles.name} numberOfLines={1}>{b.customer?.name || 'Customer'}</Text>
+                    </View>
                     <View style={[styles.statusBadge, { backgroundColor: colors.bg }]}>
                       <Text style={[styles.statusText, { color: colors.text }]}>{b.status}</Text>
                     </View>
@@ -182,7 +212,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   backArrow: { width: 36, height: 36, justifyContent: 'center', alignItems: 'flex-start' },
-  headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#111' },
+  headerTitle: { flex: 1, fontSize: 18, fontWeight: 'bold', color: '#111', textAlign: 'center' },
   headerSpacer: { width: 36 },
   tabRow: {
     flexDirection: 'row',
@@ -208,7 +238,8 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  name: { fontSize: 15, fontWeight: '600', color: '#111', flex: 1, marginRight: 8 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  name: { fontSize: 15, fontWeight: '600', color: '#111', flex: 1 },
   service: { fontSize: 13, color: '#666', marginBottom: 8 },
   cardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   date: { fontSize: 12, color: '#999' },

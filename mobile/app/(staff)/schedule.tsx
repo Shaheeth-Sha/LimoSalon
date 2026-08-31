@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AlertModal, { AlertType } from '../../components/AlertModal';
+import Avatar from '../../components/Avatar';
 import { BASE_URL } from '../../config/api';
 
 const STATUS_API = (bookingId: string) => `${BASE_URL}/api/staff/bookings/${bookingId}/status`;
@@ -32,11 +33,13 @@ export default function AppointmentDetails() {
 
   const bookingId = paramStr(params.bookingId);
   const customerName = paramStr(params.customerName) || 'Customer';
+  const customerAvatar = paramStr(params.customerAvatar);
   const service = paramStr(params.service) || 'Service';
   const rawDate = paramStr(params.date);
   const rawTime = paramStr(params.time);
+  const estimatedDuration = Number(paramStr(params.estimatedDuration)) || 0;
   const [status, setStatus] = useState(paramStr(params.status) || 'Pending');
-  const [updating, setUpdating] = useState<'Confirmed' | 'Completed' | 'Cancelled' | null>(null);
+  const [updating, setUpdating] = useState<'Confirmed' | 'Completed' | 'Cancelled' | 'No-show' | null>(null);
 
   const [alert, setAlert] = useState<{ visible: boolean; type: AlertType; title: string; message: string }>({
     visible: false,
@@ -53,7 +56,8 @@ export default function AppointmentDetails() {
   const isPending = status === 'Pending';
   const isCancelled = status === 'Cancelled';
   const isCompleted = status === 'Completed';
-  const actionsDisabled = isCancelled || isCompleted || Boolean(updating);
+  const isNoShow = status === 'No-show';
+  const actionsDisabled = isCancelled || isCompleted || isNoShow || Boolean(updating);
 
   // Real-world flow: a booking can't be completed before it's even
   // been confirmed, and a confirmed one can't be completed before its
@@ -78,9 +82,30 @@ export default function AppointmentDetails() {
 
   const bookingDateTime = parseBookingDateTime(rawDate, rawTime);
   const notStartedYet = Boolean(bookingDateTime) && bookingDateTime!.getTime() > Date.now();
+  const hasStarted = Boolean(bookingDateTime) && bookingDateTime!.getTime() <= Date.now();
   const completeDisabled = actionsDisabled || isPending || notStartedYet;
 
-  const updateStatus = async (nextStatus: 'Confirmed' | 'Completed' | 'Cancelled') => {
+  // Real-world flow (matches the backend guard in updateBookingStatus):
+  // cancelling only makes sense before the appointment's scheduled
+  // time actually arrives — a Pending request can still be declined
+  // any time (declining a stale unconfirmed request is always
+  // meaningful), but a Confirmed booking can't be "cancelled" once its
+  // time has already passed. From that point the only honest outcomes
+  // are Completed or No-show.
+  const cancelDisabled = actionsDisabled || (!isPending && hasStarted);
+
+  // The customer gets their full scheduled window (start + duration)
+  // to show up before staff can mark them a no-show — same rule the
+  // backend enforces. Falls back to a 60-minute window when this
+  // booking has no estimatedDuration on record.
+  const durationMinutes = estimatedDuration > 0 ? estimatedDuration : 60;
+  const bookingEndDateTime = bookingDateTime
+    ? new Date(bookingDateTime.getTime() + durationMinutes * 60 * 1000)
+    : null;
+  const windowEnded = Boolean(bookingEndDateTime) && bookingEndDateTime!.getTime() <= Date.now();
+  const noShowDisabled = actionsDisabled || isPending || !windowEnded;
+
+  const updateStatus = async (nextStatus: 'Confirmed' | 'Completed' | 'Cancelled' | 'No-show') => {
     if (!bookingId) {
       showAlert('error', 'Missing Appointment', 'This appointment could not be identified.');
       return;
@@ -113,6 +138,8 @@ export default function AppointmentDetails() {
           ? '/appointment-confirm'
           : nextStatus === 'Completed'
           ? '/completed'
+          : nextStatus === 'No-show'
+          ? '/no-show-recorded'
           : '/cancel-success'
       );
     } catch (error: any) {
@@ -146,9 +173,9 @@ export default function AppointmentDetails() {
           style={styles.backButton}
           activeOpacity={0.7}
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 20 }}
-          onPress={() => router.replace('/(staff)/home')}
+          onPress={() => router.back()}
         >
-          <Ionicons name="arrow-back" size={26} color="#000" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
       </View>
@@ -167,6 +194,17 @@ export default function AppointmentDetails() {
         {/* Content Container */}
         <View style={styles.contentContainer}>
           <Text style={styles.screenTitle}>Appointment Details</Text>
+
+          <View style={styles.customerHeader}>
+            <Avatar
+              uri={customerAvatar}
+              name={customerName}
+              size={56}
+              fallbackColor="#FFE1EC"
+              textStyle={{ color: '#FF1462' }}
+            />
+            <Text style={styles.customerHeaderName} numberOfLines={1}>{customerName}</Text>
+          </View>
 
           {!bookingId && (
             <Text style={styles.noticeText}>
@@ -217,6 +255,8 @@ export default function AppointmentDetails() {
                   ? 'This appointment has been cancelled.'
                   : isCompleted
                   ? 'This appointment has already been marked completed.'
+                  : isNoShow
+                  ? 'This appointment was marked as a no-show.'
                   : ''}
               </Text>
             )}
@@ -232,7 +272,22 @@ export default function AppointmentDetails() {
               <Text style={styles.noticeText}>
                 This appointment hasn't started yet — it's scheduled for{' '}
                 {formatDisplayTime(rawTime)} on {formatDisplayDate(rawDate)}. You can mark it
-                completed once that time arrives.
+                completed once that time arrives. Cancelling is only possible before then.
+              </Text>
+            )}
+
+            {!actionsDisabled && !isPending && hasStarted && !windowEnded && (
+              <Text style={styles.noticeText}>
+                This appointment is in progress and can no longer be cancelled — mark it completed
+                once the service is done, or wait until the scheduled window ends to mark the
+                customer as a no-show.
+              </Text>
+            )}
+
+            {!actionsDisabled && !isPending && windowEnded && (
+              <Text style={styles.noticeText}>
+                This appointment's scheduled window has ended. Mark it completed if the customer
+                came in, or as a no-show if they never arrived.
               </Text>
             )}
 
@@ -264,11 +319,27 @@ export default function AppointmentDetails() {
               </TouchableOpacity>
             )}
 
-            {/* Cancel — available from Pending or Confirmed */}
+            {/* Mark as no-show — only once Confirmed AND the full
+                scheduled window has elapsed with nothing recorded */}
+            {!isPending && (
+              <TouchableOpacity
+                style={[styles.secondaryButton, noShowDisabled && styles.disabledButton]}
+                activeOpacity={0.8}
+                disabled={noShowDisabled}
+                onPress={() => updateStatus('No-show')}
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {updating === 'No-show' ? 'Updating...' : 'Mark as No-show'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Cancel — available from Pending any time, or from
+                Confirmed only before the appointment's time arrives */}
             <TouchableOpacity
-              style={[styles.primaryButton, actionsDisabled && styles.disabledButton]}
+              style={[styles.primaryButton, cancelDisabled && styles.disabledButton]}
               activeOpacity={0.8}
-              disabled={actionsDisabled}
+              disabled={cancelDisabled}
               onPress={goToCancelConfirm}
             >
               <Text style={styles.buttonText}>{isPending ? 'Decline' : 'Cancel'}</Text>
@@ -295,7 +366,7 @@ const styles = StyleSheet.create({
   },
   headerSection: {
     width: '100%',
-    paddingTop: 15,
+    paddingTop: 60,
     paddingBottom: 10,
     paddingHorizontal: 20,
     backgroundColor: '#FFFFFF',
@@ -305,11 +376,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backText: {
-    fontSize: 20,
+    fontSize: 18,
     color: '#000000',
-    fontWeight: '500',
+    fontWeight: '600',
     marginLeft: 5,
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   scrollContainer: {
     flex: 1,
@@ -338,6 +408,18 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#888888',
     marginBottom: 15,
+  },
+  customerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  customerHeaderName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000000',
+    marginLeft: 12,
+    flexShrink: 1,
   },
   detailRow: {
     flexDirection: 'row',
@@ -388,6 +470,21 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#B9791F',
+    height: 52,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  secondaryButtonText: {
+    color: '#B9791F',
     fontSize: 18,
     fontWeight: '600',
   },

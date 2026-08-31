@@ -18,6 +18,8 @@ const {
   getMyBookings,
   updateBookingStatus,
   updateMyAvailability,
+  getAvailabilityForDate,
+  updateAvailabilityForDate,
   getWeeklySummary,
   getTopCustomer,
   getHomeStats,
@@ -53,6 +55,13 @@ router.put("/profile", protectStaff, updateStaffProfile);
 router.put("/profile/photo", protectStaff, updateStaffAvatar);
 router.delete("/profile/photo", protectStaff, removeStaffAvatar);
 router.put("/availability", protectStaff, updateMyAvailability);
+
+// Per-date/per-timeslot granular availability blocks — the "real world"
+// counterpart to the global on/off switch above. A staff member can be
+// globally available but still block off specific time slots on
+// specific dates (e.g. a personal appointment at 2pm on the 14th).
+router.get("/availability/:date", protectStaff, getAvailabilityForDate);
+router.put("/availability/:date", protectStaff, updateAvailabilityForDate);
 
 // A staff member's own schedule
 router.get("/my-bookings", protectStaff, getMyBookings);

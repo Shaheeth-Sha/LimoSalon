@@ -51,7 +51,14 @@ export default function Index() {
       const data = await res.json();
 
       if (!res.ok) {
-        showAlert('error', 'Login Failed', data.message || 'Invalid email or password');
+        // A 503 here means the backend itself couldn't reach the
+        // database (see the readyState guard in loginStaff) — worth a
+        // distinct title so this never reads like a typed-in mistake.
+        showAlert(
+          'error',
+          res.status === 503 ? 'Connection Issue' : 'Login Failed',
+          data.message || 'Invalid email or password'
+        );
         return;
       }
 

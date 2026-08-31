@@ -5,12 +5,14 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../config/api';
+import Avatar from '../../components/Avatar';
 
 const RECENT_REVIEWS_API = `${BASE_URL}/api/staff/reviews/recent`;
 
 type ReviewItem = {
   id: string;
   customerName: string;
+  customerAvatar?: string;
   rating: number;
   comment: string;
   service: string;
@@ -65,7 +67,7 @@ export default function RecentReviews() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Feather name="chevron-left" size={26} color="#111" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Recent Reviews</Text>
         <View style={styles.headerSpacer} />
@@ -88,9 +90,14 @@ export default function RecentReviews() {
             reviews.map((r) => (
               <View key={r.id} style={styles.card}>
                 <View style={styles.cardTop}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarInitial}>{r.customerName.charAt(0).toUpperCase()}</Text>
-                  </View>
+                  <Avatar
+                    uri={r.customerAvatar}
+                    name={r.customerName}
+                    size={40}
+                    fallbackColor="#FFE1EC"
+                    style={{ marginRight: 10 }}
+                    textStyle={{ color: '#FF1462' }}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.customerName}>{r.customerName}</Text>
                     {r.service ? <Text style={styles.service} numberOfLines={1}>{r.service}</Text> : null}

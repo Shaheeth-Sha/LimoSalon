@@ -1,13 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../config/api';
 import Avatar from '../../components/Avatar';
 
+// Home's "Upcoming Appointments" View All — mirrors today-jobs.tsx's
+// single scrollable list pattern, but for every future date rather
+// than just today, since a real "View All" on a list means the whole
+// list, not a calendar you tap through one day at a time.
 const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
 
 type Booking = {
@@ -27,20 +31,27 @@ const formatLocalDate = (date: Date): string =>
 const formatDisplayTime = (time: string): string =>
   time ? time.replace(/am$/i, 'A.M').replace(/pm$/i, 'P.M') : '';
 
+const formatDisplayDate = (dateStr: string): string => {
+  try {
+    return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
 const statusColor = (status: string) => {
   if (status === 'Completed') return { bg: '#E4F7E9', text: '#1E8A3C' };
   if (status === 'Cancelled') return { bg: '#FBE4E4', text: '#C13333' };
-  // Renamed from "Awaiting Confirmation" — now belongs to a Confirmed
-  // appointment whose time has passed but hasn't been marked
-  // Completed yet, distinct from "Pending" below (a new request that
-  // hasn't been confirmed or declined at all).
   if (status === 'Awaiting Completion') return { bg: '#FFF3D6', text: '#8A6D1F' };
   if (status === 'Pending') return { bg: '#DCEBFF', text: '#1D5FAB' };
   if (status === 'No-show') return { bg: '#FBE9D2', text: '#B9791F' };
   return { bg: '#FDE4ED', text: '#FF1462' };
 };
 
-export default function TodayJobs() {
+export default function UpcomingAppointments() {
   const router = useRouter();
   const isFocused = useIsFocused();
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -67,28 +78,34 @@ export default function TodayJobs() {
 
       const todayStr = formatLocalDate(new Date());
       const all: Booking[] = Array.isArray(data.bookings) ? data.bookings : [];
-      // Fixed: the API returns bookings latest-first — a real "today's
-      // jobs" list should read soonest-first (your next job at the
-      // top), not furthest-away-first.
+
+      // Same "active, future-dated" definition Home's Upcoming
+      // Appointments section uses, sorted soonest-first — the API
+      // itself returns newest-first, which read backwards here.
       setBookings(
         all
-          .filter((b) => b.selectedDate === todayStr)
-          .sort((a, b) => a.selectedTime.localeCompare(b.selectedTime))
+          .filter(
+            (b) =>
+              b.selectedDate > todayStr &&
+              b.status !== 'Cancelled' &&
+              b.status !== 'Completed' &&
+              b.status !== 'No-show'
+          )
+          .sort((a, b) => {
+            if (a.selectedDate !== b.selectedDate) {
+              return a.selectedDate < b.selectedDate ? -1 : 1;
+            }
+            return a.selectedTime.localeCompare(b.selectedTime);
+          })
       );
     } catch (error) {
-      console.error('Load today jobs failed:', error);
+      console.error('Load upcoming appointments failed:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [router]);
 
-  // Fixed: this screen only ever loaded once on mount, so cancelling a
-  // booking from the schedule detail screen and navigating back here
-  // (the stack keeps this component alive underneath) kept showing
-  // whatever the list looked like before the cancellation — same
-  // staleness bug already fixed on my-schedule.tsx and the badge/
-  // notification screens via useIsFocused.
   useEffect(() => {
     if (isFocused) {
       load();
@@ -106,7 +123,7 @@ export default function TodayJobs() {
         <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Today's Jobs</Text>
+        <Text style={styles.headerTitle}>Upcoming Appointments</Text>
         <View style={styles.headerSpacer} />
       </View>
 
@@ -121,13 +138,13 @@ export default function TodayJobs() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF1462" />}
         >
           <Text style={styles.countText}>
-            {bookings.length} appointment{bookings.length === 1 ? '' : 's'} today
+            {bookings.length} upcoming appointment{bookings.length === 1 ? '' : 's'}
           </Text>
 
           {bookings.length === 0 ? (
             <View style={styles.emptyBox}>
               <Ionicons name="calendar-outline" size={40} color="#D0D0D0" />
-              <Text style={styles.emptyText}>No appointments scheduled for today.</Text>
+              <Text style={styles.emptyText}>No upcoming appointments scheduled.</Text>
             </View>
           ) : (
             bookings.map((b) => {
@@ -167,7 +184,9 @@ export default function TodayJobs() {
                   <View style={styles.cardBody}>
                     <Text style={styles.name} numberOfLines={1}>{b.customer?.name || 'Customer'}</Text>
                     <Text style={styles.service} numberOfLines={1}>{serviceNames}</Text>
-                    <Text style={styles.time}>{formatDisplayTime(b.selectedTime)}</Text>
+                    <Text style={styles.time}>
+                      {formatDisplayDate(b.selectedDate)} · {formatDisplayTime(b.selectedTime)}
+                    </Text>
                   </View>
                   <View style={[styles.statusBadge, { backgroundColor: colors.bg }]}>
                     <Text style={[styles.statusText, { color: colors.text }]}>{status}</Text>
@@ -212,16 +231,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     marginBottom: 14,
   },
-  avatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#FFE1EC',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  avatarInitial: { fontSize: 18, fontWeight: '700', color: '#FF1462' },
   cardBody: { flex: 1 },
   name: { fontSize: 15, fontWeight: '600', color: '#111', marginBottom: 3 },
   service: { fontSize: 13, color: '#666', marginBottom: 3 },

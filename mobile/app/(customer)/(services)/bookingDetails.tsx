@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import Avatar from "../../../components/Avatar";
 
 type ServiceItem = { name: string; price?: number; duration?: number };
 
@@ -16,7 +17,7 @@ type Booking = {
   services: ServiceItem[];
   hairLength?: { name?: string };
   bookingType?: string;
-  staff: { name: string; role?: string };
+  staff: { name: string; role?: string; image?: string };
   selectedDate: string;
   selectedTime: string;
   estimatedDuration?: number;
@@ -130,7 +131,15 @@ export default function BookingDetails() {
 
           <View style={styles.divider} />
 
-          <Row label="Staff" value={booking.staff?.name || "-"} />
+          <Row
+            label="Staff"
+            value={booking.staff?.name || "-"}
+            icon={
+              booking.staff?.name ? (
+                <Avatar uri={booking.staff.image} name={booking.staff.name} size={22} style={{ marginRight: 6 }} />
+              ) : undefined
+            }
+          />
           {booking.staff?.role ? <Row label="Role" value={booking.staff.role} /> : null}
           <Row label="Date" value={formatDate(booking.selectedDate)} />
           <Row label="Time" value={booking.selectedTime} />
@@ -176,11 +185,14 @@ export default function BookingDetails() {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center" }}>
+        {icon}
+        <Text style={styles.rowValue}>{value}</Text>
+      </View>
     </View>
   );
 }

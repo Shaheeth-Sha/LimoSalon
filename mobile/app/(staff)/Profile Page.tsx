@@ -113,6 +113,14 @@ export default function Profile() {
   return (
     <View style={styles.mainContainer}>
       <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.headerRow}>
+          <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <Ionicons name="chevron-back" size={24} color="#000" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>My Profile</Text>
+          <View style={{ width: 24 }} />
+        </View>
+
         <View style={styles.avatarContainer}>
           <View style={styles.avatar}>
             {avatarUrl ? (
@@ -205,6 +213,14 @@ export default function Profile() {
 const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#FFF' },
   content: { padding: 25, alignItems: 'center', paddingTop: 60 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 15,
+  },
+  headerTitle: { fontSize: 18, fontWeight: '600', color: '#000' },
   avatarContainer: { marginBottom: 15 },
   avatar: {
     width: 120,

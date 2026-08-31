@@ -127,7 +127,13 @@ export default function Notifications() {
             contentContainerStyle={{ paddingBottom: 20 }}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#FF1462" />}
           >
-            <Text style={styles.title}>Notifications</Text>
+            <View style={styles.headerRow}>
+              <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Ionicons name="chevron-back" size={24} color="#000" />
+              </TouchableOpacity>
+              <Text style={styles.title}>Notifications</Text>
+              <View style={{ width: 24 }} />
+            </View>
 
             {notifications.length === 0 ? (
               <View style={styles.emptyBox}>
@@ -197,7 +203,8 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   content: { padding: 25 },
   loaderBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  title: { fontSize: 26, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 26, fontWeight: 'bold', textAlign: 'center' },
   emptyBox: { alignItems: 'center', paddingVertical: 60 },
   emptyText: { color: '#8E8E93', fontSize: 14, marginTop: 12, textAlign: 'center', lineHeight: 19 },
   groupLabel: { fontSize: 13, fontWeight: '700', color: '#8E8E93', marginBottom: 10, marginTop: 6, textTransform: 'uppercase' },

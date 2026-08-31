@@ -49,6 +49,19 @@ export default function EditProfile() {
     if (alert.onConfirm) alert.onConfirm();
   };
 
+  // Strict Sri Lankan mobile number formatting: digits only (one
+  // leading "+" allowed for the "+94" country code), capped at 12
+  // characters — the length of "+94" + a 9-digit subscriber number,
+  // the longest valid form (local "0771234567" is 10 characters).
+  const MAX_PHONE_LENGTH = 12;
+  const SRI_LANKA_PHONE_REGEX = /^(0|\+94)7\d{8}$/;
+  const handlePhoneChange = (text: string) => {
+    let cleaned = text.replace(/[^\d+]/g, ""); // strip anything but digits and "+"
+    cleaned = cleaned.replace(/(?!^)\+/g, ""); // only a leading "+" is allowed
+    if (cleaned.length > MAX_PHONE_LENGTH) cleaned = cleaned.slice(0, MAX_PHONE_LENGTH);
+    setPhone(cleaned);
+  };
+
   const getInitials = (value: string) => {
     const parts = value.trim().split(" ");
     if (parts.length === 0 || !parts[0]) return "";
@@ -80,6 +93,12 @@ export default function EditProfile() {
       showAlert("Missing Information", "Please enter your name");
       return;
     }
+
+    if (phone.trim() && !SRI_LANKA_PHONE_REGEX.test(phone.trim())) {
+      showAlert("Invalid Phone Number", "Please enter a valid Sri Lankan mobile number (e.g. 0771234567 or +94771234567)");
+      return;
+    }
+
     if (saving) return;
 
     setSaving(true);
@@ -174,11 +193,12 @@ export default function EditProfile() {
       <Text style={styles.label}>Phone Number</Text>
       <TextInput
         value={phone}
-        onChangeText={setPhone}
+        onChangeText={handlePhoneChange}
         style={styles.input}
-        placeholder="Add a phone number"
+        placeholder="e.g. 0771234567"
         placeholderTextColor="#999"
         keyboardType="phone-pad"
+        maxLength={MAX_PHONE_LENGTH}
       />
 
       {/* Buttons */}

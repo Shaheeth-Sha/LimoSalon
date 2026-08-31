@@ -79,6 +79,17 @@ const bookingSchema = new mongoose.Schema(
         type: String,
         default: "",
       },
+
+      // Snapshotted at booking time, same convention as name/role above
+      // (frozen to what it was when the booking was made, not a live
+      // lookup) — so a past booking's "With [stylist]" photo stays
+      // consistent with its own history even if that staff member
+      // later changes their photo. Server-relative avatarStorage.js
+      // path, same format as the live Staff.image field.
+      image: {
+        type: String,
+        default: "",
+      },
     },
 
     selectedDate: {
@@ -203,6 +214,13 @@ const bookingSchema = new mongoose.Schema(
         "Confirmed",
         "Completed",
         "Cancelled",
+        // Distinct from "Cancelled" — the salon never called this off,
+        // the customer simply never arrived within their scheduled
+        // window. Only reachable from "Confirmed", and only once the
+        // appointment's full scheduled window (start + duration) has
+        // elapsed — see updateBookingStatus in
+        // staffScheduleController.js.
+        "No-show",
       ],
       // Real-world flow: a booking starts as Pending until the
       // assigned staff member explicitly confirms it (see

@@ -6,16 +6,18 @@ import { useIsFocused } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../config/api';
 import { useStaffUnreadCount } from '../../hooks/useStaffUnreadCount';
+import Avatar from '../../components/Avatar';
 
 const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
 const HOME_STATS_API = `${BASE_URL}/api/staff/stats/home`;
 
 type Booking = {
   _id: string;
-  customer?: { name?: string };
+  customer?: { name?: string; avatar?: string };
   services: { name: string }[];
   selectedDate: string;
   selectedTime: string;
+  estimatedDuration?: number;
   status: string;
   effectiveStatus: string;
   isPast: boolean;
@@ -41,6 +43,19 @@ const formatLocalDate = (date: Date): string => {
 // staff-side card style already designed here.
 const formatDisplayTime = (time: string): string =>
   time ? time.replace(/am$/i, 'A.M').replace(/pm$/i, 'P.M') : '';
+
+// Same status -> color mapping today-jobs.tsx / appointment-history.tsx
+// already use — Home's cards were the one place still showing every
+// status in the same flat pink pill, which reads as broken/unfinished
+// next to every other screen that colors a status by what it means.
+const statusColor = (status: string) => {
+  if (status === 'Completed') return { bg: '#E4F7E9', text: '#1E8A3C' };
+  if (status === 'Cancelled') return { bg: '#FBE4E4', text: '#C13333' };
+  if (status === 'Awaiting Completion') return { bg: '#FFF3D6', text: '#8A6D1F' };
+  if (status === 'Pending') return { bg: '#DCEBFF', text: '#1D5FAB' };
+  if (status === 'No-show') return { bg: '#FBE9D2', text: '#B9791F' };
+  return { bg: '#FDE4ED', text: '#FF1462' };
+};
 
 export default function Home() {
   const [search, setSearch] = useState('');
@@ -139,7 +154,7 @@ export default function Home() {
   const todayStr = formatLocalDate(new Date());
 
   const activeBookings = bookings.filter(
-    (b) => b.status !== 'Cancelled' && b.status !== 'Completed'
+    (b) => b.status !== 'Cancelled' && b.status !== 'Completed' && b.status !== 'No-show'
   );
 
   const searchText = search.trim().toLowerCase();
@@ -154,20 +169,37 @@ export default function Home() {
   const toCardItem = (b: Booking) => ({
     id: b._id,
     name: b.customer?.name || 'Customer',
+    avatar: b.customer?.avatar || '',
     service: (b.services || []).map((s) => s.name).join(', ') || 'Service',
     time: formatDisplayTime(b.selectedTime),
     rawTime: b.selectedTime,
     date: b.selectedDate,
     status: b.effectiveStatus || b.status,
     rawStatus: b.status,
+    estimatedDuration: b.estimatedDuration || 0,
   });
+
+  // Fixed: the API returns bookings sorted newest-first (soonest to
+  // load for "history"-style screens), but a real scheduling app shows
+  // a day's — or the upcoming — appointments soonest-first, not
+  // furthest-away-first. Both lists here inherited that raw API order
+  // unsorted, so a staff member's next appointment could show up dead
+  // last on the list.
+  const sortByDateTime = (a: Booking, b: Booking) => {
+    if (a.selectedDate !== b.selectedDate) {
+      return a.selectedDate < b.selectedDate ? -1 : 1;
+    }
+    return a.selectedTime.localeCompare(b.selectedTime);
+  };
 
   const todaysAppointments = activeBookings
     .filter((b) => b.selectedDate === todayStr && matchesSearch(b))
+    .sort(sortByDateTime)
     .map(toCardItem);
 
   const upcomingAppointments = activeBookings
     .filter((b) => b.selectedDate > todayStr && matchesSearch(b))
+    .sort(sortByDateTime)
     .map(toCardItem);
 
   return (
@@ -287,15 +319,27 @@ export default function Home() {
           <>
             {}
             {/* Today's Appointment Section */}
-            <Text style={styles.sectionTitle}>Today's Appointment</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Today's Appointment</Text>
+              {todaysAppointments.length > 0 && (
+                <TouchableOpacity onPress={() => router.push('/today-jobs')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.viewAllText}>View All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {todaysAppointments.length === 0 ? (
               <Text style={styles.emptyText}>No appointments today.</Text>
             ) : (
               todaysAppointments.map((item) => (
                 <View key={item.id} style={styles.appointmentCard}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarInitial}>{item.name.charAt(0).toUpperCase()}</Text>
-                  </View>
+                  <Avatar
+                    uri={item.avatar}
+                    name={item.name}
+                    size={64}
+                    fallbackColor="#FFE1EC"
+                    style={{ marginRight: 12 }}
+                    textStyle={{ color: '#FF1462' }}
+                  />
                   <View style={styles.cardDetails}>
                     <View style={styles.rowLayout}>
                       <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
@@ -308,7 +352,7 @@ export default function Home() {
                   </View>
                   {/* 💡 මෙතන soft pink status badge එක TouchableOpacity එකක් කරලා /schedule පේජ් එකට ලින්ක් කලා */}
                   <TouchableOpacity
-                    style={styles.statusBadge}
+                    style={[styles.statusBadge, { backgroundColor: statusColor(item.status).bg }]}
                     activeOpacity={0.7}
                     onPress={() =>
                       router.push({
@@ -320,11 +364,13 @@ export default function Home() {
                           date: item.date,
                           time: item.rawTime,
                           status: item.rawStatus,
+                          estimatedDuration: String(item.estimatedDuration || 0),
+                          customerAvatar: item.avatar || '',
                         },
                       })
                     }
                   >
-                    <Text style={styles.statusText}>{item.status}</Text>
+                    <Text style={[styles.statusText, { color: statusColor(item.status).text }]}>{item.status}</Text>
                   </TouchableOpacity>
                 </View>
               ))
@@ -335,15 +381,27 @@ export default function Home() {
 
             {}
             {/* Upcoming Appointments Section */}
-            <Text style={styles.sectionTitle}>Upcoming Appointments</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Upcoming Appointments</Text>
+              {upcomingAppointments.length > 0 && (
+                <TouchableOpacity onPress={() => router.push('/upcoming-appointments')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Text style={styles.viewAllText}>View All</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {upcomingAppointments.length === 0 ? (
               <Text style={styles.emptyText}>No upcoming appointments.</Text>
             ) : (
               upcomingAppointments.map((item) => (
                 <View key={item.id} style={styles.appointmentCard}>
-                  <View style={styles.avatar}>
-                    <Text style={styles.avatarInitial}>{item.name.charAt(0).toUpperCase()}</Text>
-                  </View>
+                  <Avatar
+                    uri={item.avatar}
+                    name={item.name}
+                    size={64}
+                    fallbackColor="#FFE1EC"
+                    style={{ marginRight: 12 }}
+                    textStyle={{ color: '#FF1462' }}
+                  />
                   <View style={styles.cardDetails}>
                     <View style={styles.rowLayout}>
                       <Text style={styles.clientName} numberOfLines={2}>{item.name}</Text>
@@ -368,6 +426,8 @@ export default function Home() {
                           date: item.date,
                           time: item.rawTime,
                           status: item.rawStatus,
+                          estimatedDuration: String(item.estimatedDuration || 0),
+                          customerAvatar: item.avatar || '',
                         },
                       })
                     }
@@ -472,6 +532,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 16,
     fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  viewAllText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FF1462',
   },
   statsGrid: {
     flexDirection: 'row',

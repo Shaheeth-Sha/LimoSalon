@@ -3,7 +3,8 @@ const Staff = require("../models/Staff");
 const Customer = require("../models/Customer");
 const Review = require("../models/Review");
 const LoyaltyAccount = require("../models/LoyaltyAccount");
-const { getBookingDateTime } = require("./bookingController");
+const StaffAvailabilityBlock = require("../models/StaffAvailabilityBlock");
+const { getBookingDateTime, normalizeBookingTime } = require("./bookingController");
 const { createNotification } = require("./notificationController");
 
 const getStaffId = (req) => {
@@ -27,12 +28,22 @@ const getMyBookings = async (req, res) => {
       return res.status(401).json({ success: false, message: "Staff authentication is required" });
     }
 
+    // Optional — set by the Customer Profile screen's "View Appointment
+    // History" button (via appointment-history.tsx's customerId param)
+    // to narrow this staff member's own bookings down to just one
+    // customer. Omitted everywhere else, which keeps the existing
+    // "every one of my bookings" behavior unchanged.
+    const query = { "staff.staffId": String(staffId) };
+    if (req.query.customerId) {
+      query.customer = req.query.customerId;
+    }
+
     // Booking only stores a customer ObjectId ref (no name/phone
     // snapshot) — populate the bits the staff-side cards actually
     // display so home.tsx/my-schedule.tsx don't need a second round
     // trip per booking.
-    const bookings = await Booking.find({ "staff.staffId": String(staffId) })
-      .populate("customer", "name email phone")
+    const bookings = await Booking.find(query)
+      .populate("customer", "name email phone avatar")
       .sort({ selectedDate: -1, selectedTime: -1 })
       .lean();
 
@@ -61,12 +72,12 @@ const getMyBookings = async (req, res) => {
       }
 
       // Same fix as bookingController.js's getMyBookings: Completed
-      // must force isPast too, not just Cancelled, since a staff
-      // member can mark a booking Completed before its scheduled time
-      // actually arrives — otherwise it stays stuck out of the
-      // Appointment History screen (which filters on isPast) until
-      // the original slot time passes.
-      if (booking.status === "Cancelled" || booking.status === "Completed") {
+      // (and now No-show) must force isPast too, not just Cancelled,
+      // since a staff member can mark a booking Completed before its
+      // scheduled time actually arrives — otherwise it stays stuck out
+      // of the Appointment History screen (which filters on isPast)
+      // until the original slot time passes.
+      if (booking.status === "Cancelled" || booking.status === "Completed" || booking.status === "No-show") {
         isPast = true;
       }
 
@@ -99,12 +110,22 @@ const getMyBookings = async (req, res) => {
 // Real-world flow (per product decision): a customer's booking starts
 // life as "Pending" (see Booking.js's default). Staff must explicitly
 // Confirm or Cancel/decline it — only once it's Confirmed can staff go
-// on to mark it Completed. A Pending booking can be declined the same
-// way a Confirmed one can be cancelled, so "Cancelled" stays reachable
-// from either state; "Confirmed" is only reachable from "Pending"; and
-// "Completed" is only reachable from "Confirmed", and only once the
-// appointment's actual scheduled time has arrived.
-const ALLOWED_STAFF_STATUSES = ["Confirmed", "Completed", "Cancelled"];
+// on to mark it Completed or No-show. A Pending booking can be
+// declined the same way a Confirmed one can be cancelled, so
+// "Cancelled" stays reachable from either state; "Confirmed" is only
+// reachable from "Pending"; "Completed" is only reachable from
+// "Confirmed", and only once the appointment's actual scheduled time
+// has arrived; and "No-show" is only reachable from "Confirmed", and
+// only once the customer's ENTIRE scheduled window has elapsed with
+// nothing recorded — see the per-status checks below.
+const ALLOWED_STAFF_STATUSES = ["Confirmed", "Completed", "Cancelled", "No-show"];
+
+// Fallback appointment length when a booking's own estimatedDuration
+// is missing/zero (shouldn't normally happen — every booking sets it
+// from its services' durations at creation — but a bad/legacy record
+// shouldn't be able to make a no-show unreachable forever). Matches
+// the business-hours default interval in timeSlotController.js.
+const DEFAULT_APPOINTMENT_DURATION_MINUTES = 60;
 
 const updateBookingStatus = async (req, res) => {
   try {
@@ -145,9 +166,31 @@ const updateBookingStatus = async (req, res) => {
       return res.status(400).json({ success: false, message: "This booking is already marked completed" });
     }
 
+    if (previousStatus === "No-show") {
+      return res.status(400).json({ success: false, message: "This booking has already been marked as a no-show" });
+    }
+
     if (status === "Confirmed" && previousStatus !== "Pending") {
       return res.status(400).json({ success: false, message: "This booking is already confirmed" });
     }
+
+    // Parsed once, reused by the Completed/Cancelled/No-show checks
+    // below — every one of them cares where "now" sits relative to
+    // this appointment's scheduled window.
+    let bookingDateTime;
+    try {
+      bookingDateTime = getBookingDateTime(booking.selectedDate, booking.selectedTime);
+    } catch (parseError) {
+      console.error("Failed to parse booking date/time for status check:", parseError.message);
+      bookingDateTime = null;
+    }
+
+    const durationMinutes = Number(booking.estimatedDuration) > 0
+      ? Number(booking.estimatedDuration)
+      : DEFAULT_APPOINTMENT_DURATION_MINUTES;
+    const bookingEndDateTime = bookingDateTime
+      ? new Date(bookingDateTime.getTime() + durationMinutes * 60 * 1000)
+      : null;
 
     if (status === "Completed") {
       // A booking that hasn't been accepted yet can't be completed —
@@ -166,18 +209,49 @@ const updateBookingStatus = async (req, res) => {
       // full scheduled date+time against right now, not just the
       // calendar date, so this also still catches a booking dated for
       // a future day entirely.
-      let bookingDateTime;
-      try {
-        bookingDateTime = getBookingDateTime(booking.selectedDate, booking.selectedTime);
-      } catch (parseError) {
-        console.error("Failed to parse booking date/time for completion check:", parseError.message);
-        bookingDateTime = null;
-      }
-
       if (bookingDateTime && bookingDateTime.getTime() > Date.now()) {
         return res.status(400).json({
           success: false,
           message: `This appointment hasn't started yet — it's scheduled for ${booking.selectedTime} on ${booking.selectedDate}. You can mark it completed once that time arrives.`,
+        });
+      }
+    }
+
+    if (status === "Cancelled") {
+      // Real-world flow (per product decision, following the same
+      // reasoning as the Completed check above): cancelling means
+      // preventing something from happening — once the appointment's
+      // scheduled start time has actually arrived, there's nothing
+      // left to prevent. From that point on the only honest outcomes
+      // are Completed (it happened) or No-show (the customer never
+      // came), not Cancelled.
+      if (bookingDateTime && bookingDateTime.getTime() <= Date.now()) {
+        return res.status(400).json({
+          success: false,
+          message: "This appointment's scheduled time has already passed — mark it completed, or as a no-show if the customer never arrived, instead of cancelling it.",
+        });
+      }
+    }
+
+    if (status === "No-show") {
+      // Same "must be accepted first" rule as Completed — a request
+      // that was never confirmed gets declined (Cancelled), not
+      // marked as a no-show.
+      if (previousStatus !== "Confirmed") {
+        return res.status(400).json({
+          success: false,
+          message: "Confirm this booking before marking it as a no-show.",
+        });
+      }
+
+      // The customer gets their FULL scheduled window to arrive —
+      // this can't be marked the moment the start time ticks over,
+      // only once the appointment would have already finished had
+      // they shown up on time.
+      if (bookingEndDateTime && bookingEndDateTime.getTime() > Date.now()) {
+        return res.status(400).json({
+          success: false,
+          message: `This appointment's scheduled window hasn't ended yet — it runs until ${bookingEndDateTime.toLocaleTimeString()}. Wait until then, or mark it completed if the customer is here.`,
         });
       }
     }
@@ -201,6 +275,12 @@ const updateBookingStatus = async (req, res) => {
         type: "booking_confirmed",
         title: "Appointment Completed",
         message: `Your appointment on ${booking.selectedDate} has been marked completed. Thank you for visiting LimoSalon!`,
+      };
+    } else if (status === "No-show") {
+      notification = {
+        type: "booking_no_show",
+        title: "Missed Appointment",
+        message: `You were marked as a no-show for your appointment on ${booking.selectedDate} at ${booking.selectedTime}. Please contact the salon if you think this is a mistake.`,
       };
     } else if (previousStatus === "Pending") {
       notification = {
@@ -279,6 +359,127 @@ const updateMyAvailability = async (req, res) => {
 };
 
 /* -------------------------------------------------------------------------- */
+/*        Per-date/per-slot availability blocks (the granular feature)        */
+/* -------------------------------------------------------------------------- */
+
+const DATE_STRING_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+// A staff member is "booked" (not just "blocked") at a slot when they
+// already have a real Pending or Confirmed appointment there — those
+// slots are shown as booked/disabled in the UI rather than toggleable,
+// since blocking or unblocking them wouldn't change anything real.
+const getBookedTimesForDate = async (staffId, date) => {
+  const bookings = await Booking.find({
+    "staff.staffId": String(staffId),
+    selectedDate: date,
+    status: { $in: ["Pending", "Confirmed"] },
+  })
+    .select("selectedTime")
+    .lean();
+
+  return bookings.map((b) => b.selectedTime);
+};
+
+// GET /api/staff/availability/:date — everything update-availability.tsx
+// needs to render one day's timeslot grid: the staff member's own
+// blocked slots (toggleable) and already-booked slots (shown, but not
+// toggleable) for that date.
+const getAvailabilityForDate = async (req, res) => {
+  try {
+    const staffId = getStaffId(req);
+    const { date } = req.params;
+
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: "Staff authentication is required" });
+    }
+
+    if (!DATE_STRING_PATTERN.test(date || "")) {
+      return res.status(400).json({ success: false, message: "date must be in YYYY-MM-DD format" });
+    }
+
+    const [staff, block, bookedTimes] = await Promise.all([
+      Staff.findById(staffId).select("available").lean(),
+      StaffAvailabilityBlock.findOne({ staffId: String(staffId), date }).lean(),
+      getBookedTimesForDate(staffId, date),
+    ]);
+
+    if (!staff) {
+      return res.status(404).json({ success: false, message: "Staff account not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      date,
+      available: staff.available !== false,
+      blockedTimes: block?.blockedTimes || [],
+      bookedTimes,
+    });
+  } catch (error) {
+    console.error("Get staff availability for date error:", error);
+
+    return res.status(500).json({ success: false, message: "Unable to load availability for that date" });
+  }
+};
+
+// PUT /api/staff/availability/:date — replaces the full set of blocked
+// slots for this staff+date with whatever the app sends (the UI always
+// submits the complete current selection, not a diff). Booked slots
+// aren't rejected if accidentally included — a staff member blocking a
+// slot they're already booked for is harmless, it just has no
+// additional effect since getBookingAvailability already treats a
+// booked slot as unavailable regardless.
+const updateAvailabilityForDate = async (req, res) => {
+  try {
+    const staffId = getStaffId(req);
+    const { date } = req.params;
+    const { blockedTimes } = req.body;
+
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: "Staff authentication is required" });
+    }
+
+    if (!DATE_STRING_PATTERN.test(date || "")) {
+      return res.status(400).json({ success: false, message: "date must be in YYYY-MM-DD format" });
+    }
+
+    if (!Array.isArray(blockedTimes)) {
+      return res.status(400).json({ success: false, message: "blockedTimes must be an array" });
+    }
+
+    let normalizedTimes;
+
+    try {
+      // Accepts either "08.00 am" (the /api/time-slots display format)
+      // or "08:00 am" — normalizeBookingTime handles both — and
+      // dedupes, so the stored set always matches Booking.selectedTime's
+      // own format exactly.
+      normalizedTimes = [...new Set(blockedTimes.map((t) => normalizeBookingTime(t)))];
+    } catch (parseError) {
+      return res.status(400).json({ success: false, message: parseError.message || "Invalid time in blockedTimes" });
+    }
+
+    const block = await StaffAvailabilityBlock.findOneAndUpdate(
+      { staffId: String(staffId), date },
+      { staffId: String(staffId), date, blockedTimes: normalizedTimes },
+      { upsert: true, new: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: normalizedTimes.length
+        ? "Your blocked slots for this date have been saved"
+        : "All slots on this date are now open",
+      date,
+      blockedTimes: block.blockedTimes,
+    });
+  } catch (error) {
+    console.error("Update staff availability for date error:", error);
+
+    return res.status(500).json({ success: false, message: "Unable to update availability for that date" });
+  }
+};
+
+/* -------------------------------------------------------------------------- */
 /*                    Shared date helpers for the stats endpoints             */
 /* -------------------------------------------------------------------------- */
 
@@ -342,12 +543,35 @@ const getWeeklySummary = async (req, res) => {
       "staff.staffId": String(staffId),
       selectedDate: { $gte: start, $lte: end },
     })
-      .select("selectedDate status totalAmount")
+      .select("selectedDate status totalAmount customer")
       .lean();
 
     const completed = bookings.filter((b) => b.status === "Completed");
     const cancelled = bookings.filter((b) => b.status === "Cancelled");
     const revenue = completed.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
+
+    // "New customer" = someone whose FIRST EVER booking with this staff
+    // member falls inside this week — i.e. they had no booking with
+    // this staff before this week started. Real, queryable data (not
+    // a made-up figure like a "products sold" count would be, since
+    // this app has no retail/product-sales feature at all).
+    const weekCustomerIds = [...new Set(bookings.map((b) => String(b.customer)).filter(Boolean))];
+
+    const customersWithEarlierBookings = weekCustomerIds.length
+      ? await Booking.distinct("customer", {
+          "staff.staffId": String(staffId),
+          customer: { $in: weekCustomerIds },
+          selectedDate: { $lt: start },
+        })
+      : [];
+
+    const earlierCustomerSet = new Set(customersWithEarlierBookings.map(String));
+    const newCustomers = weekCustomerIds.filter((id) => !earlierCustomerSet.has(id)).length;
+
+    // Rating is a lifetime figure (same one Home's stat tiles show),
+    // not week-scoped — shown here the way a real weekly digest would,
+    // as "here's where your rating stands as of this report."
+    const staff = await Staff.findById(staffId).select("rating").lean();
 
     const byDay = DAY_LABELS.map((label, index) => {
       const dayDate = new Date(mondayDate);
@@ -374,6 +598,8 @@ const getWeeklySummary = async (req, res) => {
         completedJobs: completed.length,
         cancelledJobs: cancelled.length,
         revenue,
+        newCustomers,
+        averageRating: staff?.rating || 0,
         byDay,
       },
     });
@@ -441,8 +667,8 @@ const getTopCustomer = async (req, res) => {
     }
 
     const [customer, loyaltyAccount] = await Promise.all([
-      Customer.findById(topCustomerId).select("name email phone").lean(),
-      LoyaltyAccount.findOne({ customer: topCustomerId }).select("tier").lean(),
+      Customer.findById(topCustomerId).select("name email phone avatar createdAt").lean(),
+      LoyaltyAccount.findOne({ customer: topCustomerId }).select("tier points memberSince").lean(),
     ]);
 
     if (!customer) {
@@ -452,13 +678,17 @@ const getTopCustomer = async (req, res) => {
     return res.status(200).json({
       success: true,
       topCustomer: {
+        customerId: String(customer._id),
         name: customer.name,
         email: customer.email,
         phone: customer.phone || "",
+        avatar: customer.avatar || "",
         visits: topStats.visits,
         totalSpent: topStats.totalSpent,
         lastVisit: topStats.lastVisit,
         tier: loyaltyAccount?.tier || "Bronze",
+        loyaltyPoints: loyaltyAccount?.points || 0,
+        memberSince: loyaltyAccount?.memberSince || customer.createdAt || null,
       },
     });
   } catch (error) {
@@ -524,6 +754,8 @@ module.exports = {
   getMyBookings,
   updateBookingStatus,
   updateMyAvailability,
+  getAvailabilityForDate,
+  updateAvailabilityForDate,
   getWeeklySummary,
   getTopCustomer,
   getHomeStats,

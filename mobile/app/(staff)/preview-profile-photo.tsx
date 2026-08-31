@@ -93,7 +93,7 @@ export default function PreviewProfilePhoto() {
           onPress={handleCancel}
           disabled={uploading}
         >
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
           <Text style={styles.backText}>Back</Text>
         </TouchableOpacity>
       </View>
@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
   emptyState: { justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
   headerSection: {
     width: '100%',
-    paddingTop: 15,
+    paddingTop: 60,
     paddingBottom: 10,
     paddingHorizontal: 20,
     backgroundColor: '#FFFFFF',
@@ -152,9 +152,8 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 18,
     color: '#000000',
-    fontWeight: '500',
+    fontWeight: '600',
     marginLeft: 5,
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   content: { flex: 1, paddingHorizontal: 25, alignItems: 'center' },
   title: {

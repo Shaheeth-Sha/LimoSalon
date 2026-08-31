@@ -39,6 +39,7 @@ const notificationSchema = new mongoose.Schema(
         "booking_confirmed",
         "booking_rescheduled",
         "booking_cancelled",
+        "booking_no_show",
         "points_earned",
         "reward_claimed",
         "tier_upgraded",

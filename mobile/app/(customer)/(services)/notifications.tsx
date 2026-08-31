@@ -31,6 +31,7 @@ const ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   booking_confirmed: "checkmark-circle-outline",
   booking_rescheduled: "time-outline",
   booking_cancelled: "close-circle-outline",
+  booking_no_show: "alert-circle-outline",
   points_earned: "sparkles-outline",
   reward_claimed: "gift-outline",
   tier_upgraded: "trophy-outline",

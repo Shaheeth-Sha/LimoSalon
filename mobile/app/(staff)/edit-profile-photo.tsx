@@ -119,7 +119,7 @@ export default function EditProfilePhoto() {
           onPress={() => router.back()}
           disabled={busy}
         >
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
           <Text style={styles.backText}>Back to Profile</Text>
         </TouchableOpacity>
       </View>
@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#FFFFFF' },
   headerSection: {
     width: '100%',
-    paddingTop: 15,
+    paddingTop: 60,
     paddingBottom: 10,
     paddingHorizontal: 20,
     backgroundColor: '#FFFFFF',
@@ -197,9 +197,8 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 18,
     color: '#000000',
-    fontWeight: '500',
+    fontWeight: '600',
     marginLeft: 5,
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   content: { paddingHorizontal: 25, paddingTop: 15, alignItems: 'center' },
   title: {

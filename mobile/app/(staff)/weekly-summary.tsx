@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { BASE_URL } from '../../config/api';
+import AlertModal from '../../components/AlertModal';
 
 const WEEKLY_SUMMARY_API = `${BASE_URL}/api/staff/stats/weekly`;
 
@@ -17,6 +20,8 @@ type Summary = {
   completedJobs: number;
   cancelledJobs: number;
   revenue: number;
+  newCustomers: number;
+  averageRating: number;
   byDay: DayStat[];
 };
 
@@ -28,11 +33,91 @@ const formatDisplayDate = (dateStr: string): string => {
   }
 };
 
+// Includes the year — used in the exported PDF report itself, where
+// the short chip-style date used in the on-screen week nav would be
+// ambiguous once the report is saved or shared outside the app.
+const formatFullDate = (dateStr: string): string => {
+  try {
+    return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
+};
+
+const buildReportHtml = (summary: Summary, staffName: string): string => {
+  const dayRows = summary.byDay
+    .map(
+      (d) => `
+        <tr>
+          <td>${d.label} (${formatDisplayDate(d.date)})</td>
+          <td style="text-align:right;">${d.jobs}</td>
+          <td style="text-align:right;">LKR ${d.revenue.toLocaleString()}</td>
+        </tr>`
+    )
+    .join('');
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: Helvetica, Arial, sans-serif; color: #111; padding: 32px; }
+          h1 { color: #FF1462; margin-bottom: 4px; }
+          .range { color: #666; margin-bottom: 24px; }
+          .stats { display: flex; gap: 12px; margin-bottom: 24px; }
+          .stat { flex: 1; background: #FAFAFA; border-radius: 10px; padding: 14px; text-align: center; }
+          .stat .value { font-size: 20px; font-weight: 700; }
+          .stat .label { font-size: 11px; color: #8E8E93; margin-top: 2px; }
+          .revenue { background: #FDE4ED; border-radius: 10px; padding: 16px; margin-bottom: 24px; }
+          .revenue .value { font-size: 24px; font-weight: 700; color: #FF1462; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { padding: 8px 6px; border-bottom: 1px solid #EEE; font-size: 13px; text-align: left; }
+          th { color: #8E8E93; font-weight: 600; }
+        </style>
+      </head>
+      <body>
+        <h1>Weekly Summary</h1>
+        <div class="range">${staffName ? `${staffName} · ` : ''}${formatFullDate(summary.weekStart)} – ${formatFullDate(summary.weekEnd)}</div>
+
+        <div class="stats">
+          <div class="stat"><div class="value">${summary.totalJobs}</div><div class="label">Total Jobs</div></div>
+          <div class="stat"><div class="value">${summary.completedJobs}</div><div class="label">Completed</div></div>
+          <div class="stat"><div class="value">${summary.cancelledJobs}</div><div class="label">Cancelled</div></div>
+          <div class="stat"><div class="value">${summary.newCustomers}</div><div class="label">New Customers</div></div>
+          <div class="stat"><div class="value">${summary.averageRating.toFixed(1)}</div><div class="label">Avg Rating</div></div>
+        </div>
+
+        <div class="revenue">
+          <div style="font-size:12px;color:#8A1230;">Revenue This Week</div>
+          <div class="value">LKR ${summary.revenue.toLocaleString()}</div>
+          <div style="font-size:11px;color:#B0507A;margin-top:2px;">From completed appointments only</div>
+        </div>
+
+        <table>
+          <thead><tr><th>Day</th><th style="text-align:right;">Jobs</th><th style="text-align:right;">Revenue</th></tr></thead>
+          <tbody>${dayRows}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+};
+
 export default function WeeklySummary() {
   const router = useRouter();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [staffName, setStaffName] = useState('');
+  const [exporting, setExporting] = useState<'download' | 'share' | null>(null);
+  const [alertState, setAlertState] = useState<{ visible: boolean; title: string; message: string }>({
+    visible: false,
+    title: '',
+    message: '',
+  });
 
   const load = useCallback(async (weekOffset: number) => {
     try {
@@ -62,13 +147,69 @@ export default function WeeklySummary() {
     load(offset);
   }, [offset, load]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = await AsyncStorage.getItem('staffData');
+        if (stored) {
+          const staff = JSON.parse(stored);
+          setStaffName(staff?.name || '');
+        }
+      } catch {
+        // Non-critical — the report just omits the staff name.
+      }
+    })();
+  }, []);
+
   const maxJobs = summary ? Math.max(1, ...summary.byDay.map((d) => d.jobs)) : 1;
+
+  // Both buttons generate the same real PDF from this week's actual
+  // data — Expo's own file-save story on both platforms runs through
+  // the native share sheet anyway (there's no silent "drop this in
+  // Downloads" API without extra storage permissions), so "Download"
+  // and "Share" open the same sheet with a different prompt, exactly
+  // like most real mobile apps do for exporting a report.
+  const handleExport = async (mode: 'download' | 'share') => {
+    if (!summary || exporting) return;
+
+    setExporting(mode);
+
+    try {
+      const canShare = await Sharing.isAvailableAsync();
+
+      if (!canShare) {
+        setAlertState({
+          visible: true,
+          title: 'Not Available',
+          message: "Saving or sharing files isn't supported on this device.",
+        });
+        return;
+      }
+
+      const { uri } = await Print.printToFileAsync({ html: buildReportHtml(summary, staffName) });
+
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: mode === 'download' ? 'Save Weekly Report' : 'Share Weekly Report',
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (error) {
+      console.error('Export weekly report failed:', error);
+      setAlertState({
+        visible: true,
+        title: 'Export Failed',
+        message: "Couldn't generate the report PDF. Please try again.",
+      });
+    } finally {
+      setExporting(null);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Feather name="chevron-left" size={26} color="#111" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Weekly Summary</Text>
         <View style={styles.headerSpacer} />
@@ -135,9 +276,68 @@ export default function WeeklySummary() {
             ))}
           </View>
 
+          <View style={styles.secondaryStatsRow}>
+            <View style={styles.secondaryStatTile}>
+              <View style={styles.secondaryStatIconBg}>
+                <Feather name="user-plus" size={16} color="#FF1462" />
+              </View>
+              <Text style={styles.summaryValue}>{summary?.newCustomers ?? 0}</Text>
+              <Text style={styles.summaryLabel}>New Customers</Text>
+            </View>
+            <View style={styles.secondaryStatTile}>
+              <View style={styles.secondaryStatIconBg}>
+                <Ionicons name="star" size={16} color="#FF1462" />
+              </View>
+              <Text style={styles.summaryValue}>{(summary?.averageRating ?? 0).toFixed(1)}</Text>
+              <Text style={styles.summaryLabel}>Average Rating</Text>
+            </View>
+          </View>
+
+          <View style={styles.exportRow}>
+            <TouchableOpacity
+              style={styles.exportButton}
+              activeOpacity={0.8}
+              disabled={!!exporting}
+              onPress={() => handleExport('download')}
+            >
+              {exporting === 'download' ? (
+                <ActivityIndicator size="small" color="#FF1462" />
+              ) : (
+                <>
+                  <Feather name="download" size={15} color="#FF1462" />
+                  <Text style={styles.exportButtonText}>Download PDF</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.exportButton, styles.exportButtonFilled]}
+              activeOpacity={0.8}
+              disabled={!!exporting}
+              onPress={() => handleExport('share')}
+            >
+              {exporting === 'share' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Feather name="share-2" size={15} color="#fff" />
+                  <Text style={[styles.exportButtonText, styles.exportButtonTextFilled]}>Share Report</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+
           <View style={{ height: 20 }} />
         </ScrollView>
       )}
+
+      <AlertModal
+        visible={alertState.visible}
+        type="error"
+        title={alertState.title}
+        message={alertState.message}
+        onClose={() => setAlertState((prev) => ({ ...prev, visible: false }))}
+      />
     </SafeAreaView>
   );
 }
@@ -204,4 +404,36 @@ const styles = StyleSheet.create({
   barFillVertical: { width: '100%', backgroundColor: '#FF1462', borderRadius: 9 },
   dayLabel: { fontSize: 11, color: '#8E8E93', marginBottom: 2 },
   dayCount: { fontSize: 11, fontWeight: '600', color: '#333' },
+  secondaryStatsRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  secondaryStatTile: {
+    flex: 1,
+    backgroundColor: '#FAFAFA',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  secondaryStatIconBg: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FDE4ED',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  exportRow: { flexDirection: 'row', gap: 12, marginTop: 20 },
+  exportButton: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 7,
+    borderWidth: 1.5,
+    borderColor: '#FF1462',
+    borderRadius: 25,
+    paddingVertical: 13,
+  },
+  exportButtonFilled: { backgroundColor: '#FF1462', borderColor: '#FF1462' },
+  exportButtonText: { color: '#FF1462', fontWeight: '700', fontSize: 13 },
+  exportButtonTextFilled: { color: '#fff' },
 });

@@ -23,6 +23,7 @@ import {
 } from "expo-router";
 
 import { BASE_URL } from "../../../config/api";
+import Avatar from "../../../components/Avatar";
 
 // Fixed: this used to be hardcoded to `?category=Hair`, so every
 // booking flow — regardless of the actual service category selected
@@ -1054,19 +1055,38 @@ export default function Staff() {
                     )
                   }
                 >
-                  <Ionicons
-                    name={
-                      isAny
-                        ? "people-outline"
-                        : "person-outline"
-                    }
-                    size={42}
-                    color={
-                      unavailable
-                        ? "#888"
-                        : "#111"
-                    }
-                  />
+                  {isAny ? (
+                    <Ionicons
+                      name="people-outline"
+                      size={42}
+                      color={
+                        unavailable
+                          ? "#888"
+                          : "#111"
+                      }
+                    />
+                  ) : (
+                    <Avatar
+                      uri={staffMember.image}
+                      name={staffMember.name}
+                      size={52}
+                      fallbackColor={
+                        unavailable
+                          ? "#B5567A"
+                          : "#FFF"
+                      }
+                      textStyle={{
+                        color: unavailable
+                          ? "#DDD"
+                          : "#D86B91",
+                      }}
+                      style={
+                        unavailable && {
+                          opacity: 0.7,
+                        }
+                      }
+                    />
+                  )}
 
                   <View
                     style={

@@ -1,21 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather, Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../config/api';
+import Avatar from '../../components/Avatar';
 
 const TOP_CUSTOMER_API = `${BASE_URL}/api/staff/stats/top-customer`;
 
 type TopCustomer = {
+  customerId: string;
   name: string;
   email: string;
   phone: string;
+  avatar?: string;
   visits: number;
   totalSpent: number;
   lastVisit: string;
   tier: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+  loyaltyPoints: number;
+  memberSince: string;
 };
 
 // Matches LoyaltyAccount.js's tier enum exactly — this is the
@@ -27,16 +32,21 @@ const TIER_COLORS: Record<string, { bg: string; text: string }> = {
   Bronze: { bg: '#F5E4D6', text: '#8A5A2A' },
 };
 
-const formatDisplayDate = (dateStr: string): string => {
-  if (!dateStr) return '';
+// memberSince comes straight from the LoyaltyAccount/Customer document
+// (a real ISO timestamp), not our app's "YYYY-MM-DD" booking-date
+// convention — needs its own parser, not formatDisplayDate above.
+const formatMemberSince = (value: string): string => {
+  if (!value) return '-';
   try {
-    return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return '-';
+    return parsed.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
     });
   } catch {
-    return dateStr;
+    return '-';
   }
 };
 
@@ -76,7 +86,7 @@ export default function TopCustomer() {
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <TouchableOpacity style={styles.backArrow} onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <Feather name="chevron-left" size={26} color="#111" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Top Customer</Text>
         <View style={styles.headerSpacer} />
@@ -95,48 +105,82 @@ export default function TopCustomer() {
         </View>
       ) : (
         <View style={styles.content}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarInitial}>{customer.name.charAt(0).toUpperCase()}</Text>
+          <View style={styles.photoCard}>
+            <View style={styles.crownBadge}>
+              <MaterialCommunityIcons name="crown" size={20} color="#F5A623" />
+            </View>
+            <Avatar
+              uri={customer.avatar}
+              name={customer.name}
+              size={92}
+              fallbackColor="#fff"
+              textStyle={{ color: '#FF1462' }}
+            />
+            <Text style={styles.name}>{customer.name}</Text>
+            <View style={[styles.tierBadge, { backgroundColor: tierStyle.bg }]}>
+              <Ionicons name="star" size={12} color={tierStyle.text} />
+              <Text style={[styles.tierText, { color: tierStyle.text }]}>{customer.tier} Member</Text>
+            </View>
           </View>
 
-          <Text style={styles.name}>{customer.name}</Text>
-
-          <View style={[styles.tierBadge, { backgroundColor: tierStyle.bg }]}>
-            <Ionicons name="star" size={12} color={tierStyle.text} />
-            <Text style={[styles.tierText, { color: tierStyle.text }]}>{customer.tier} Member</Text>
-          </View>
-
-          <View style={styles.statsRow}>
-            <View style={styles.statTile}>
+          <View style={styles.statsBox}>
+            <View style={styles.statRow}>
+              <Text style={styles.statLabel}>Total Visits</Text>
               <Text style={styles.statValue}>{customer.visits}</Text>
-              <Text style={styles.statLabel}>Visits</Text>
             </View>
-            <View style={styles.statTile}>
-              <Text style={styles.statValue}>LKR {customer.totalSpent.toLocaleString()}</Text>
+            <View style={styles.statRow}>
               <Text style={styles.statLabel}>Total Spent</Text>
+              <Text style={styles.statValue}>LKR {(customer.totalSpent ?? 0).toLocaleString()}</Text>
+            </View>
+            <View style={styles.statRow}>
+              <Text style={styles.statLabel}>Loyalty Points</Text>
+              <Text style={styles.statValue}>{(customer.loyaltyPoints ?? 0).toLocaleString()}</Text>
+            </View>
+            <View style={[styles.statRow, { marginBottom: 0 }]}>
+              <Text style={styles.statLabel}>Member Since</Text>
+              <Text style={styles.statValue}>{formatMemberSince(customer.memberSince)}</Text>
             </View>
           </View>
 
-          <View style={styles.infoBox}>
-            {customer.email ? (
-              <View style={styles.infoRow}>
-                <Feather name="mail" size={15} color="#8E8E93" style={styles.infoIcon} />
-                <Text style={styles.infoText}>{customer.email}</Text>
-              </View>
-            ) : null}
-            {customer.phone ? (
-              <View style={styles.infoRow}>
-                <Feather name="phone" size={15} color="#8E8E93" style={styles.infoIcon} />
-                <Text style={styles.infoText}>{customer.phone}</Text>
-              </View>
-            ) : null}
-            {customer.lastVisit ? (
-              <View style={styles.infoRow}>
-                <Feather name="calendar" size={15} color="#8E8E93" style={styles.infoIcon} />
-                <Text style={styles.infoText}>Last visit: {formatDisplayDate(customer.lastVisit)}</Text>
-              </View>
-            ) : null}
-          </View>
+          <TouchableOpacity
+            style={styles.outlineButton}
+            activeOpacity={0.8}
+            onPress={() =>
+              router.push({
+                pathname: '/customer-profile',
+                params: {
+                  customerId: customer.customerId,
+                  name: customer.name,
+                  email: customer.email,
+                  phone: customer.phone,
+                  avatar: customer.avatar || '',
+                  tier: customer.tier,
+                  visits: String(customer.visits),
+                  totalSpent: String(customer.totalSpent),
+                  loyaltyPoints: String(customer.loyaltyPoints),
+                  memberSince: customer.memberSince,
+                },
+              })
+            }
+          >
+            <Text style={styles.outlineButtonText}>View Profile</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.outlineButton, { marginTop: 12 }]}
+            activeOpacity={0.8}
+            onPress={() =>
+              router.push({
+                pathname: '/appointment-history',
+                params: {
+                  customerId: customer.customerId,
+                  customerName: customer.name,
+                },
+              })
+            }
+          >
+            <Text style={styles.outlineButtonText}>View Appointment History</Text>
+          </TouchableOpacity>
         </View>
       )}
     </SafeAreaView>
@@ -159,18 +203,26 @@ const styles = StyleSheet.create({
   loaderBox: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40 },
   emptyText: { color: '#8E8E93', fontSize: 14, marginTop: 12, textAlign: 'center', lineHeight: 19 },
-  content: { alignItems: 'center', paddingHorizontal: 24, paddingTop: 20 },
-  avatar: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#FFE1EC',
+  content: { alignItems: 'center', paddingHorizontal: 24, paddingTop: 12, paddingBottom: 30 },
+  photoCard: {
+    width: '100%',
+    backgroundColor: '#FDE4ED',
+    borderRadius: 20,
+    paddingTop: 26,
+    paddingBottom: 20,
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  crownBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 8,
   },
-  avatarInitial: { fontSize: 34, fontWeight: '700', color: '#FF1462' },
-  name: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 10 },
+  name: { fontSize: 20, fontWeight: '700', color: '#111', marginTop: 14, marginBottom: 10 },
   tierBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -178,21 +230,26 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     gap: 6,
-    marginBottom: 24,
   },
   tierText: { fontSize: 12, fontWeight: '700' },
-  statsRow: { flexDirection: 'row', width: '100%', gap: 12, marginBottom: 24 },
-  statTile: {
-    flex: 1,
+  statsBox: {
+    width: '100%',
     backgroundColor: '#FAFAFA',
-    borderRadius: 14,
+    borderRadius: 16,
+    paddingHorizontal: 18,
     paddingVertical: 18,
+    marginBottom: 22,
+  },
+  statRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  statLabel: { fontSize: 14, fontWeight: '700', color: '#111' },
+  statValue: { fontSize: 14, fontWeight: '600', color: '#444' },
+  outlineButton: {
+    width: '100%',
+    borderWidth: 1.5,
+    borderColor: '#FF1462',
+    borderRadius: 25,
+    paddingVertical: 14,
     alignItems: 'center',
   },
-  statValue: { fontSize: 17, fontWeight: '800', color: '#111', marginBottom: 4 },
-  statLabel: { fontSize: 11, color: '#8E8E93' },
-  infoBox: { width: '100%' },
-  infoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  infoIcon: { marginRight: 10 },
-  infoText: { fontSize: 13, color: '#444' },
+  outlineButtonText: { color: '#FF1462', fontWeight: '700', fontSize: 14 },
 });

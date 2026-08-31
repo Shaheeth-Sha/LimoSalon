@@ -181,13 +181,14 @@ const getMyRecentReviews = async (req, res) => {
     const reviews = await Review.find({ staffId: String(staffId) })
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate("customer", "name")
+      .populate("customer", "name avatar")
       .populate("booking", "services selectedDate")
       .lean();
 
     const formatted = reviews.map((r) => ({
       id: r._id,
       customerName: r.customer?.name || "Customer",
+      customerAvatar: r.customer?.avatar || "",
       rating: r.rating,
       comment: r.comment || "",
       service: (r.booking?.services || []).map((s) => s.name).filter(Boolean).join(", "),

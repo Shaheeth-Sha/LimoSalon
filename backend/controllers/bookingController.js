@@ -4,6 +4,7 @@ const Booking = require("../models/Booking");
 const BookingHold = require("../models/BookingHold");
 const Customer = require("../models/Customer");
 const Staff = require("../models/Staff");
+const StaffAvailabilityBlock = require("../models/StaffAvailabilityBlock");
 const ClaimedReward = require("../models/ClaimedReward");
 const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
@@ -374,12 +375,13 @@ const findConfirmedBookingConflict = async ({
   // both, since both occupy that staff member's time equally.
   const query = {
     "staff.staffId": staffId,
-    // Completed excluded too, not just Cancelled — a staff member can
-    // now mark a booking Completed ahead of its actual scheduled time
-    // (see staffScheduleController.js's updateBookingStatus), and a
-    // Completed appointment has no further claim on that slot, so it
-    // must not permanently block new bookings there.
-    status: { $nin: ["Cancelled", "Completed"] },
+    // Completed and No-show excluded too, not just Cancelled — a staff
+    // member can now mark a booking Completed ahead of its actual
+    // scheduled time, or No-show once the customer's window has fully
+    // elapsed (see staffScheduleController.js's updateBookingStatus),
+    // and neither has any further claim on that slot, so they must not
+    // permanently block new bookings there.
+    status: { $nin: ["Cancelled", "Completed", "No-show"] },
     $or: [
       { selectedDate: { $in: nearbyDates } },
       { wantsTrialMakeup: true, trialMakeupDate: { $in: nearbyDates } },
@@ -853,11 +855,27 @@ const getBookingAvailability = async (req, res) => {
       staffDocs.filter((s) => s.available === false).map((s) => String(s._id))
     );
 
+    // Real-world granular counterpart to the toggle above: a staff
+    // member can be globally available but still have blocked off this
+    // specific date+time from update-availability.tsx on the staff app
+    // (see StaffAvailabilityBlock.js). Without this check that screen
+    // was purely cosmetic — nothing on the customer side ever actually
+    // respected a blocked slot.
+    const blockedDocs = await StaffAvailabilityBlock.find({
+      staffId: { $in: requestedStaffIds.map(String) },
+      date: normalizedDate,
+      blockedTimes: normalizedTime,
+    })
+      .select("staffId")
+      .lean();
+
+    const blockedForThisSlot = new Set(blockedDocs.map((b) => String(b.staffId)));
+
     const availableStaffIds = [];
     const unavailableStaffIds = [];
 
     for (const currentStaffId of requestedStaffIds) {
-      if (globallyUnavailable.has(String(currentStaffId))) {
+      if (globallyUnavailable.has(String(currentStaffId)) || blockedForThisSlot.has(String(currentStaffId))) {
         unavailableStaffIds.push(currentStaffId);
         continue;
       }
@@ -1127,6 +1145,7 @@ const createBooking = async (req, res) => {
         staffId: selectedStaffId,
         name: String(staff?.name || ""),
         role: String(staff?.role || ""),
+        image: String(staff?.image || ""),
       },
 
       selectedDate: normalizedDate,
@@ -1329,12 +1348,12 @@ const getMyBookings = async (req, res) => {
         isPast = true;
       }
 
-      // Cancelled is always "done"; Completed is too, even when a
-      // staff member marks it done ahead of the actual scheduled time
-      // (isPast otherwise stays false until that time passes, which
-      // was hiding same-day completed appointments from the Past tab
-      // here).
-      if (booking.status === "Cancelled" || booking.status === "Completed") {
+      // Cancelled is always "done"; Completed and No-show are too,
+      // even when a staff member marks it done/no-show ahead of the
+      // actual scheduled time (isPast otherwise stays false until
+      // that time passes, which was hiding same-day completed
+      // appointments from the Past tab here).
+      if (booking.status === "Cancelled" || booking.status === "Completed" || booking.status === "No-show") {
         isPast = true;
       }
 
@@ -1620,4 +1639,5 @@ module.exports = {
   cancelBooking,
   rescheduleBooking,
   getBookingDateTime,
+  normalizeBookingTime,
 };

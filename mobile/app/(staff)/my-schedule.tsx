@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   StyleSheet,
   Text,
@@ -15,20 +15,22 @@ import {
 // avoid by using react-native-safe-area-context instead.
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useIsFocused } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BASE_URL } from "../../config/api";
 import { useStaffUnreadCount } from "../../hooks/useStaffUnreadCount";
+import Avatar from "../../components/Avatar";
 
 const MY_BOOKINGS_API = `${BASE_URL}/api/staff/my-bookings`;
 
 type Booking = {
   _id: string;
-  customer?: { name?: string };
+  customer?: { name?: string; avatar?: string };
   services: { name: string }[];
   selectedDate: string;
   selectedTime: string;
+  estimatedDuration?: number;
   status: string;
   effectiveStatus: string;
 };
@@ -46,10 +48,27 @@ export default function MySchedule() {
   const isFocused = useIsFocused();
   const { unreadCount } = useStaffUnreadCount();
 
+  // Optional — set by Home's "Upcoming Appointments" View All button
+  // (a "YYYY-MM-DD" date), so the calendar opens directly on the
+  // nearest upcoming appointment instead of always defaulting to
+  // today, which used to make that button land back on today's
+  // (already-seen) slot list instead of the upcoming ones it promised.
+  const { targetDate } = useLocalSearchParams<{ targetDate?: string }>();
+
   // Real calendar
   const today = new Date();
-  const [currentDate, setCurrentDate] = useState(today);
-  const [selectedDay, setSelectedDay] = useState(today.getDate());
+  const initialDate = useMemo(() => {
+    if (targetDate) {
+      const parsed = new Date(`${targetDate}T00:00:00`);
+      if (!Number.isNaN(parsed.getTime())) return parsed;
+    }
+    return today;
+    // Only ever needs to resolve once, on this screen's initial mount —
+    // re-navigating here with a new targetDate mounts a fresh instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [currentDate, setCurrentDate] = useState(initialDate);
+  const [selectedDay, setSelectedDay] = useState(initialDate.getDate());
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -75,7 +94,7 @@ export default function MySchedule() {
   // like" before drilling into a specific day.
   const bookedDateStrings = new Set(
     bookings
-      .filter((b) => b.status !== "Cancelled" && b.status !== "Completed")
+      .filter((b) => b.status !== "Cancelled" && b.status !== "Completed" && b.status !== "No-show")
       .map((b) => b.selectedDate)
   );
 
@@ -129,9 +148,11 @@ export default function MySchedule() {
       id: b._id,
       time: b.selectedTime,
       name: b.customer?.name || "Customer",
+      avatar: b.customer?.avatar || "",
       service: (b.services || []).map((s) => s.name).join(", ") || "Service",
       status: b.effectiveStatus || b.status,
       rawStatus: b.status,
+      estimatedDuration: b.estimatedDuration || 0,
     }));
 
   return (
@@ -139,6 +160,9 @@ export default function MySchedule() {
       <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Ionicons name="chevron-back" size={24} color="#000" />
+            </TouchableOpacity>
             <Text style={styles.headerTitle}>My Schedule</Text>
             <TouchableOpacity
               style={styles.availabilityBtn}
@@ -259,6 +283,8 @@ export default function MySchedule() {
                       date: selectedDateStr,
                       time: item.time,
                       status: item.rawStatus,
+                      estimatedDuration: String(item.estimatedDuration || 0),
+                      customerAvatar: item.avatar || "",
                     },
                   })
                 }
@@ -266,6 +292,15 @@ export default function MySchedule() {
                 <View style={styles.timeBox}>
                   <Text style={styles.timeText}>{item.time}</Text>
                 </View>
+
+                <Avatar
+                  uri={item.avatar}
+                  name={item.name}
+                  size={36}
+                  fallbackColor="#FBE1EA"
+                  style={{ marginRight: 10 }}
+                  textStyle={{ color: "#FF1462" }}
+                />
 
                 <View style={styles.appointmentInfo}>
                   <Text style={styles.appointmentName} numberOfLines={1}>{item.name}</Text>
@@ -279,6 +314,8 @@ export default function MySchedule() {
                       ? styles.completedBox
                       : item.status === "Cancelled"
                       ? styles.cancelledBox
+                      : item.status === "No-show"
+                      ? styles.noShowBox
                       : item.status === "Pending"
                       ? styles.pendingBox
                       : styles.bookedBox,
@@ -516,6 +553,10 @@ const styles = StyleSheet.create({
 
   cancelledBox: {
     backgroundColor: "#9E9E9E",
+  },
+
+  noShowBox: {
+    backgroundColor: "#B9791F",
   },
 
   pendingBox: {

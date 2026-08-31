@@ -33,6 +33,18 @@ export default function EditProfile() {
 
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
 
+  // Strict phone formatting, matching the customer app's registration
+  // rules: digits only (one leading "+" allowed for a country code),
+  // capped at 15 characters (E.164 max) so the field can't be filled
+  // with an arbitrarily long string of numbers.
+  const MAX_PHONE_LENGTH = 15;
+  const handlePhoneChange = (text: string) => {
+    let cleaned = text.replace(/[^\d+]/g, ''); // strip anything but digits and "+"
+    cleaned = cleaned.replace(/(?!^)\+/g, ''); // only a leading "+" is allowed
+    if (cleaned.length > MAX_PHONE_LENGTH) cleaned = cleaned.slice(0, MAX_PHONE_LENGTH);
+    setPhone(cleaned);
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -56,6 +68,12 @@ export default function EditProfile() {
 
     if (!name.trim()) {
       showAlert('error', 'Missing Name', 'Please enter your name.');
+      return;
+    }
+
+    const digitsOnly = phone.replace(/\D/g, '');
+    if (phone.trim() && (digitsOnly.length < 7 || digitsOnly.length > 15)) {
+      showAlert('error', 'Invalid Phone Number', 'Please enter a valid phone number (7-15 digits).');
       return;
     }
 
@@ -106,7 +124,7 @@ export default function EditProfile() {
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 20 }}
           onPress={() => router.back()}
         >
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="chevron-back" size={24} color="#000" />
           <Text style={styles.backText}>Back to Profile</Text>
         </TouchableOpacity>
       </View>
@@ -127,10 +145,11 @@ export default function EditProfile() {
         <TextInput
           style={styles.input}
           value={phone}
-          onChangeText={setPhone}
+          onChangeText={handlePhoneChange}
           placeholder="Not set"
           placeholderTextColor="#999"
           keyboardType="phone-pad"
+          maxLength={MAX_PHONE_LENGTH}
         />
 
         <Text style={styles.label}>Email</Text>
@@ -164,7 +183,7 @@ const styles = StyleSheet.create({
   mainContainer: { flex: 1, backgroundColor: '#FFFFFF' },
   headerSection: {
     width: '100%',
-    paddingTop: 15,
+    paddingTop: 60,
     paddingBottom: 10,
     paddingHorizontal: 20,
     backgroundColor: '#FFFFFF',
@@ -173,9 +192,8 @@ const styles = StyleSheet.create({
   backText: {
     fontSize: 18,
     color: '#000000',
-    fontWeight: '500',
+    fontWeight: '600',
     marginLeft: 5,
-    fontFamily: Platform.OS === 'ios' ? 'Georgia' : 'serif',
   },
   content: { paddingHorizontal: 25, paddingTop: 15, alignItems: 'center' },
   title: {
