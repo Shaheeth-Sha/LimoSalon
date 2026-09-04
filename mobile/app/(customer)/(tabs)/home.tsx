@@ -9,12 +9,14 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons, MaterialCommunityIcons, Feather } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BASE_URL } from "../../../config/api";
 import Avatar from "../../../components/Avatar";
+import { getTierGradient, getTierAccent, getTierBorder } from "../../../utils/tierTheme";
 
 const PROFILE_API = `${BASE_URL}/api/customers/profile`;
 const MY_BOOKINGS_API = `${BASE_URL}/api/bookings/my-bookings`;
@@ -174,10 +176,21 @@ export default function Home() {
   // even though Bookings (which fetches fresh every time) was
   // already correct. Now both refresh together whenever Home regains
   // focus, matching the same pattern already used for the badge.
+  //
+  // Fixed: the loyalty card (and the coupons list) had this exact
+  // same bug too — loaded once on mount and never again. That meant
+  // if a customer had Home open (or backgrounded, or just hadn't
+  // force-closed the app) from before a booking was marked Completed,
+  // the card kept showing stale points/tier forever, even though
+  // Loyalty Dashboard — which always fetches fresh on its own mount —
+  // showed the correct, up-to-date number. Now both refresh on every
+  // focus too.
   useFocusEffect(
     useCallback(() => {
       loadUnreadCount();
       loadNextBooking();
+      loadLoyalty();
+      loadCoupons();
     }, [])
   );
 
@@ -354,15 +367,25 @@ export default function Home() {
           </View>
         </View>
 
-        {/* LOYALTY CARD */}
-        <View style={styles.loyaltyCard}>
+        {/* LOYALTY CARD — gradient + accent recolor per membership tier,
+            like a real premium card (Bronze copper, Silver brushed
+            steel, Gold gold-leaf, Platinum graphite-black), instead of
+            one flat color shown to every customer regardless of tier. */}
+        <LinearGradient
+          colors={getTierGradient(loyalty?.tier)}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.loyaltyCard, { borderColor: getTierBorder(loyalty?.tier) }]}
+        >
           <View>
             {loyaltyLoading ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : loyalty ? (
               <>
                 <Text style={styles.memberTitle}>{loyalty.tier} Member</Text>
-                <Text style={styles.points}>{loyalty.points} Points</Text>
+                <Text style={[styles.points, { color: getTierAccent(loyalty.tier) }]}>
+                  {loyalty.points} Points
+                </Text>
               </>
             ) : (
               <Text style={styles.memberTitle}>Welcome!</Text>
@@ -380,9 +403,13 @@ export default function Home() {
           </View>
 
           <View style={styles.crownCircle}>
-            <MaterialCommunityIcons name="crown" size={38} color="#FFD166" />
+            <MaterialCommunityIcons
+              name="crown"
+              size={38}
+              color={getTierAccent(loyalty?.tier)}
+            />
           </View>
-        </View>
+        </LinearGradient>
 
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>Upcoming</Text>
@@ -605,13 +632,20 @@ const styles = StyleSheet.create({
   loyaltyCard: {
     marginTop: 28,
     marginHorizontal: 20,
-    backgroundColor: "#A60F1C",
     borderRadius: 12,
+    borderWidth: 1,
     padding: 18,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     minHeight: 140,
+    // Card-like depth so it reads as a physical membership card sitting
+    // on the page, matching the "premium card" feel of real loyalty apps.
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 5,
   },
 
   memberTitle: {

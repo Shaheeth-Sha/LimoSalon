@@ -7,6 +7,18 @@ const mongoose = require("mongoose");
 // dates at query time, not stored as a field — see couponController.
 const couponSchema = new mongoose.Schema(
   {
+    // What a customer actually types into the "Apply Coupon Code"
+    // field at checkout (see couponResolver.js). Not required — a
+    // coupon created before this field existed just isn't redeemable
+    // online until one is added, same as any other seeded-by-hand
+    // field on this model.
+    code: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+
     title: {
       type: String,
       required: true,

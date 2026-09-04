@@ -1,12 +1,12 @@
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AlertModal, { AlertType } from '../../components/AlertModal';
 import { BASE_URL } from '../../config/api';
-import { resolveAvatarUrl } from '../../utils/resolveAvatarUrl';
 import { useStaffUnreadCount } from '../../hooks/useStaffUnreadCount';
+import Avatar from '../../components/Avatar';
 
 const PROFILE_API = `${BASE_URL}/api/staff/profile`;
 
@@ -93,15 +93,6 @@ export default function Profile() {
     router.replace('/');
   };
 
-  const initials = (staff?.name || '?')
-    .trim()
-    .split(/\s+/)
-    .map((part) => part.charAt(0).toUpperCase())
-    .slice(0, 2)
-    .join('');
-
-  const avatarUrl = resolveAvatarUrl(staff?.image);
-
   if (loading) {
     return (
       <View style={[styles.mainContainer, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -121,14 +112,12 @@ export default function Profile() {
           <View style={{ width: 24 }} />
         </View>
 
+        {/* Same shared Avatar component every other staff screen uses
+            to show this person's photo (customer-profile.tsx,
+            top-customer.tsx, schedule.tsx, home.tsx...) — this screen
+            used to hand-roll its own off-brand pink circle instead. */}
         <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
-            ) : (
-              <Text style={styles.avatarText}>{initials}</Text>
-            )}
-          </View>
+          <Avatar uri={staff?.image} name={staff?.name} size={120} textStyle={styles.avatarText} />
           <TouchableOpacity
             style={styles.editIcon}
             activeOpacity={0.8}
@@ -139,7 +128,6 @@ export default function Profile() {
         </View>
         <Text style={styles.name}>{staff?.name}</Text>
         <Text style={styles.role}>{staff?.role}</Text>
-        <View style={styles.line} />
 
         <Text style={styles.label}>Full Name</Text>
         <View style={styles.readOnlyBox}>
@@ -222,21 +210,10 @@ const styles = StyleSheet.create({
   },
   headerTitle: { fontSize: 18, fontWeight: '600', color: '#000' },
   avatarContainer: { marginBottom: 15 },
-  avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: '#FADADD',
-    justifyContent: 'center',
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  avatarImage: { width: '100%', height: '100%' },
   avatarText: { fontSize: 40, fontWeight: 'bold' },
   editIcon: { position: 'absolute', bottom: 5, right: 5, backgroundColor: '#000', padding: 8, borderRadius: 15 },
   name: { fontSize: 22, fontWeight: 'bold' },
   role: { color: '#888', marginBottom: 20 },
-  line: { width: '100%', height: 2, backgroundColor: '#000', marginBottom: 20 },
   label: { alignSelf: 'flex-start', marginBottom: 5, fontWeight: '600' },
   readOnlyBox: {
     width: '100%',
@@ -248,7 +225,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F5',
   },
   readOnlyText: { color: '#333', fontSize: 15 },
-  btn: { width: '100%', padding: 15, borderRadius: 10, backgroundColor: '#FF1462', alignItems: 'center', marginBottom: 10 },
+  btn: { width: '100%', padding: 15, borderRadius: 25, backgroundColor: '#FF1462', alignItems: 'center', marginBottom: 10 },
   btnText: { color: '#FFF', fontWeight: 'bold' },
   logoutBtn: { backgroundColor: '#FFF', borderWidth: 1.5, borderColor: '#FF1462' },
   logoutBtnText: { color: '#FF1462' },

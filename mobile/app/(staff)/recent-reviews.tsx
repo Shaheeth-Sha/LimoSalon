@@ -20,16 +20,40 @@ type ReviewItem = {
   createdAt: string;
 };
 
-const formatDisplayDate = (dateStr: string): string => {
-  if (!dateStr) return '';
+// Matches the relative-time style used by real review lists (Google,
+// App Store, etc.) — "2 days ago" reads far more naturally at a
+// glance than an absolute date, and only falls back to a calendar
+// date once a review is old enough that "weeks/months ago" stops
+// being useful.
+const formatRelativeTime = (isoStr: string): string => {
+  if (!isoStr) return '';
+
   try {
-    return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-US', {
+    const then = new Date(isoStr).getTime();
+    if (Number.isNaN(then)) return '';
+
+    const diffMs = Date.now() - then;
+    const diffMin = Math.floor(diffMs / 60000);
+
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? '' : 's'} ago`;
+
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
+
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay < 7) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
+
+    const diffWeek = Math.floor(diffDay / 7);
+    if (diffWeek < 5) return `${diffWeek} week${diffWeek === 1 ? '' : 's'} ago`;
+
+    return new Date(isoStr).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
     });
   } catch {
-    return dateStr;
+    return '';
   }
 };
 
@@ -102,7 +126,7 @@ export default function RecentReviews() {
                     <Text style={styles.customerName}>{r.customerName}</Text>
                     {r.service ? <Text style={styles.service} numberOfLines={1}>{r.service}</Text> : null}
                   </View>
-                  <Text style={styles.date}>{formatDisplayDate(r.date)}</Text>
+                  <Text style={styles.date}>{formatRelativeTime(r.createdAt)}</Text>
                 </View>
 
                 <View style={styles.starRow}>

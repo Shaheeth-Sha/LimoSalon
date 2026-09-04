@@ -2,7 +2,10 @@ import React, { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Animated, Easing } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+
+const paramStr = (value: string | string[] | undefined): string =>
+  Array.isArray(value) ? value[0] || '' : value || '';
 
 // Same template as completed.tsx/cancel-success.tsx (see the comment
 // there) — shares every bit of chrome and differs only in the color/
@@ -11,6 +14,13 @@ import { useRouter } from 'expo-router';
 // for time-sensitive statuses elsewhere in the staff app.
 export default function NoShowRecorded() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  // No-show deliberately never refunds (matches refundBookingPayment's
+  // own rule — a no-show forfeits whatever deposit/payment was already
+  // made). Only worth saying anything about it when this booking
+  // actually had money on it — a Pay at Salon no-show never collected
+  // a cent, so there's nothing to mention.
+  const hadPayment = paramStr(params.hadPayment) === 'true';
 
   const iconScale = useRef(new Animated.Value(0)).current;
   const checkOpacity = useRef(new Animated.Value(0)).current;
@@ -53,6 +63,9 @@ export default function NoShowRecorded() {
           <Text style={styles.subtitle}>The slot is open again</Text>
           <Text style={styles.message}>
             The customer has been notified they missed their scheduled appointment window.
+            {hadPayment
+              ? ' Their payment for this appointment is not refunded.'
+              : ''}
           </Text>
 
           <TouchableOpacity

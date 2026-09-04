@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, ScrollView, Platform } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, View, TouchableOpacity, Image, ScrollView, Platform, ActivityIndicator, Linking } from 'react-native';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AlertModal, { AlertType } from '../../components/AlertModal';
@@ -8,6 +8,54 @@ import Avatar from '../../components/Avatar';
 import { BASE_URL } from '../../config/api';
 
 const STATUS_API = (bookingId: string) => `${BASE_URL}/api/staff/bookings/${bookingId}/status`;
+const BOOKING_API = (bookingId: string) => `${BASE_URL}/api/staff/bookings/${bookingId}`;
+
+type FullBooking = {
+  _id: string;
+  customer?: { name?: string; email?: string; phone?: string; avatar?: string };
+  services: { name: string; price: number; duration?: number }[];
+  hairLength?: { name?: string; extraPrice?: number };
+  selectedDate: string;
+  selectedTime: string;
+  estimatedDuration?: number;
+  totalAmount: number;
+  originalAmount?: number | null;
+  discountAmount?: number;
+  couponCode?: string | null;
+  paymentOption: string;
+  paymentMethod: string;
+  advancePercentage?: number;
+  advancePayment?: number;
+  amountPaid: number;
+  balancePayment: number;
+  paymentStatus: string;
+  transactionReference?: string;
+  status: string;
+  notes?: string;
+  wantsTrialMakeup?: boolean;
+  trialMakeupDate?: string;
+  trialMakeupTime?: string;
+};
+
+const formatMoney = (amount: number) =>
+  `LKR ${(Number(amount) || 0).toLocaleString('en-LK', { minimumFractionDigits: 2 })}`;
+
+const paymentStatusColor = (status?: string) => {
+  if (status === 'Paid') return '#1E8A3C';
+  if (status === 'Partially Paid') return '#9A5A00';
+  if (status === 'Refunded') return '#8A6D1F';
+  if (status === 'Failed') return '#C13333';
+  return '#555555';
+};
+
+const getPaymentTypeText = (booking: FullBooking) => {
+  if (booking.paymentOption === 'advance') {
+    return booking.advancePercentage ? `${booking.advancePercentage}% Advance` : 'Advance Payment';
+  }
+  if (booking.paymentOption === 'full') return 'Full Payment';
+  if (booking.paymentOption === 'salon') return 'Pay at Salon';
+  return '-';
+};
 
 // "10.00 am" -> "10.00 A.M" to match this screen's original design.
 const formatDisplayTime = (time: string): string =>
@@ -40,6 +88,73 @@ export default function AppointmentDetails() {
   const estimatedDuration = Number(paramStr(params.estimatedDuration)) || 0;
   const [status, setStatus] = useState(paramStr(params.status) || 'Pending');
   const [updating, setUpdating] = useState<'Confirmed' | 'Completed' | 'Cancelled' | 'No-show' | null>(null);
+
+  // Fixed: this screen used to show only whatever a handful of route
+  // params happened to carry (name/service/date/time/status) — no
+  // price, no payment status, no contact info, no notes. That meant
+  // staff were confirming or declining brand new requests, or looking
+  // at a past appointment, completely blind to the money and any
+  // special instructions involved. Now it fetches the real booking by
+  // ID as its own authoritative source, the same way a real
+  // production app's detail screen would, instead of trusting every
+  // list screen to keep forwarding a complete, consistent param set.
+  const [booking, setBooking] = useState<FullBooking | null>(null);
+  const [bookingLoading, setBookingLoading] = useState(true);
+  const [bookingLoadError, setBookingLoadError] = useState('');
+
+  useEffect(() => {
+    const loadBooking = async () => {
+      if (!bookingId) {
+        setBookingLoading(false);
+        return;
+      }
+
+      try {
+        setBookingLoading(true);
+        setBookingLoadError('');
+
+        const token = await AsyncStorage.getItem('staffToken');
+
+        const res = await fetch(BOOKING_API(bookingId), {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.message || 'Unable to load this appointment');
+        }
+
+        setBooking(data.booking);
+        // The fetched record is authoritative — a list screen's status
+        // param can be stale if this booking changed elsewhere since
+        // that list last loaded.
+        setStatus(data.booking.status);
+      } catch (error: any) {
+        setBookingLoadError(String(error?.message || 'Unable to load this appointment'));
+      } finally {
+        setBookingLoading(false);
+      }
+    };
+
+    loadBooking();
+  }, [bookingId]);
+
+  // Fixed: every date/time-based rule below (whether "Mark completed"
+  // is enabled yet, whether the no-show window has elapsed, whether
+  // cancelling is still allowed) used to be computed purely from the
+  // route params a list screen happened to pass in. If the customer
+  // rescheduled this booking to a different date/time after that list
+  // last loaded, this screen would silently keep evaluating every rule
+  // against the OLD time — potentially leaving "Mark completed"
+  // disabled (or wrongly enabled) for the wrong moment entirely. Now
+  // that the booking is fetched fresh, its real selectedDate/
+  // selectedTime/estimatedDuration take over the instant they load;
+  // the route params are only a same-render fallback so the screen
+  // isn't blank for the brief moment before the fetch resolves.
+  const effectiveDate = booking?.selectedDate || rawDate;
+  const effectiveTime = booking?.selectedTime || rawTime;
+  const effectiveDuration = booking?.estimatedDuration || estimatedDuration;
 
   const [alert, setAlert] = useState<{ visible: boolean; type: AlertType; title: string; message: string }>({
     visible: false,
@@ -80,7 +195,7 @@ export default function AppointmentDetails() {
     return new Date(Number(year), Number(month) - 1, Number(day), hours, minutes, 0, 0);
   };
 
-  const bookingDateTime = parseBookingDateTime(rawDate, rawTime);
+  const bookingDateTime = parseBookingDateTime(effectiveDate, effectiveTime);
   const notStartedYet = Boolean(bookingDateTime) && bookingDateTime!.getTime() > Date.now();
   const hasStarted = Boolean(bookingDateTime) && bookingDateTime!.getTime() <= Date.now();
   const completeDisabled = actionsDisabled || isPending || notStartedYet;
@@ -98,7 +213,7 @@ export default function AppointmentDetails() {
   // to show up before staff can mark them a no-show — same rule the
   // backend enforces. Falls back to a 60-minute window when this
   // booking has no estimatedDuration on record.
-  const durationMinutes = estimatedDuration > 0 ? estimatedDuration : 60;
+  const durationMinutes = effectiveDuration > 0 ? effectiveDuration : 60;
   const bookingEndDateTime = bookingDateTime
     ? new Date(bookingDateTime.getTime() + durationMinutes * 60 * 1000)
     : null;
@@ -133,15 +248,35 @@ export default function AppointmentDetails() {
       }
 
       setStatus(nextStatus);
-      router.replace(
-        nextStatus === 'Confirmed'
-          ? '/appointment-confirm'
-          : nextStatus === 'Completed'
-          ? '/completed'
-          : nextStatus === 'No-show'
-          ? '/no-show-recorded'
-          : '/cancel-success'
-      );
+
+      if (nextStatus === 'Confirmed') {
+        router.replace('/appointment-confirm');
+      } else if (nextStatus === 'Completed') {
+        router.replace('/completed');
+      } else if (nextStatus === 'No-show') {
+        // No-show deliberately never refunds (see refundBookingPayment's
+        // own comment) — telling no-show-recorded.tsx whether this
+        // booking actually had money on it lets it say so explicitly,
+        // instead of staff having to remember the policy themselves
+        // when a customer later asks about their deposit.
+        router.replace({
+          pathname: '/no-show-recorded',
+          params: { hadPayment: String((booking?.amountPaid || 0) > 0) },
+        });
+      } else {
+        // Cancelling can trigger a real Stripe refund on the backend
+        // (refundBookingPayment in bookingController.js) if this
+        // booking was actually paid for online — pass the result along
+        // so cancel-success.tsx can tell staff whether the customer's
+        // money already went back automatically or nothing was owed.
+        router.replace({
+          pathname: '/cancel-success',
+          params: {
+            refunded: String(Boolean(data.refund?.refunded)),
+            refundAmount: String(data.refund?.amount || ''),
+          },
+        });
+      }
     } catch (error: any) {
       showAlert('error', 'Something Went Wrong', String(error?.message || error));
     } finally {
@@ -161,8 +296,21 @@ export default function AppointmentDetails() {
       // that was never accepted" apart from "cancelling an already-
       // confirmed appointment" — different enough situations that
       // they deserve different wording.
-      params: { bookingId, customerName, service, date: rawDate, time: rawTime, fromStatus: status },
+      params: { bookingId, customerName, service, date: effectiveDate, time: effectiveTime, fromStatus: status },
     });
+  };
+
+  const customerPhone = booking?.customer?.phone || '';
+  const customerEmail = booking?.customer?.email || '';
+
+  const handleCallCustomer = () => {
+    if (!customerPhone) return;
+    Linking.openURL(`tel:${customerPhone}`);
+  };
+
+  const handleTextCustomer = () => {
+    if (!customerPhone) return;
+    Linking.openURL(`sms:${customerPhone}`);
   };
 
   return (
@@ -229,14 +377,14 @@ export default function AppointmentDetails() {
           {/* Date Row */}
           <View style={styles.detailRow}>
             <Text style={styles.labelFont}>Date</Text>
-            <Text style={styles.valueFont}>{formatDisplayDate(rawDate)}</Text>
+            <Text style={styles.valueFont}>{formatDisplayDate(effectiveDate)}</Text>
           </View>
           <View style={styles.rowDivider} />
 
           {/* Time Row */}
           <View style={styles.detailRow}>
             <Text style={styles.labelFont}>Time</Text>
-            <Text style={styles.valueFont}>{formatDisplayTime(rawTime)}</Text>
+            <Text style={styles.valueFont}>{formatDisplayTime(effectiveTime)}</Text>
           </View>
           <View style={styles.rowDivider} />
 
@@ -246,6 +394,150 @@ export default function AppointmentDetails() {
             <Text style={styles.valueFont}>{status}</Text>
           </View>
           <View style={styles.rowDivider} />
+
+          {bookingLoading && (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color="#FF1462" />
+              <Text style={styles.loadingText}>Loading payment & contact details...</Text>
+            </View>
+          )}
+
+          {!bookingLoading && bookingLoadError && (
+            <Text style={styles.noticeText}>{bookingLoadError}</Text>
+          )}
+
+          {!bookingLoading && booking && (
+            <>
+              {/* Contact — so staff can actually reach the customer
+                  about this specific appointment without having to dig
+                  through a separate customer-profile screen first. */}
+              {(customerPhone || customerEmail) && (
+                <>
+                  {customerPhone ? (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.labelFont}>Phone</Text>
+                      <View style={styles.contactActions}>
+                        <Text style={styles.valueFont}>{customerPhone}</Text>
+                        <TouchableOpacity onPress={handleCallCustomer} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.iconBtn}>
+                          <Feather name="phone-call" size={16} color="#FF1462" />
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={handleTextCustomer} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.iconBtn}>
+                          <Feather name="message-square" size={16} color="#FF1462" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : null}
+                  {customerEmail ? (
+                    <View style={styles.detailRow}>
+                      <Text style={styles.labelFont}>Email</Text>
+                      <Text style={styles.valueFont} numberOfLines={1}>{customerEmail}</Text>
+                    </View>
+                  ) : null}
+                  <View style={styles.rowDivider} />
+                </>
+              )}
+
+              {/* Services breakdown — a Confirm/Decline decision (or
+                  just checking on a past job) deserves to know what was
+                  actually booked and its price, not just a joined
+                  string of names. */}
+              {(booking.services || []).map((svc, index) => (
+                <View style={styles.detailRow} key={index}>
+                  <Text style={styles.labelFont} numberOfLines={1}>{svc.name}</Text>
+                  <Text style={styles.valueFont}>{formatMoney(svc.price)}</Text>
+                </View>
+              ))}
+              {booking.hairLength?.name ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.labelFont}>Hair Length</Text>
+                  <Text style={styles.valueFont}>
+                    {booking.hairLength.name}
+                    {booking.hairLength.extraPrice ? ` (+${formatMoney(booking.hairLength.extraPrice)})` : ''}
+                  </Text>
+                </View>
+              ) : null}
+              <View style={styles.rowDivider} />
+
+              {/* Pricing & payment — the actual gap this fix closes:
+                  staff used to have no idea what a booking was worth or
+                  whether it had already been paid for before deciding
+                  whether to confirm or decline it. */}
+              {!!booking.discountAmount && booking.discountAmount > 0 && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.labelFont}>Original Amount</Text>
+                    <Text style={styles.valueFont}>
+                      {formatMoney(booking.originalAmount ?? booking.totalAmount + booking.discountAmount)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.labelFont}>
+                      Coupon{booking.couponCode ? ` (${booking.couponCode})` : ''}
+                    </Text>
+                    <Text style={[styles.valueFont, { color: '#1E8A3C' }]}>
+                      -{formatMoney(booking.discountAmount)}
+                    </Text>
+                  </View>
+                </>
+              )}
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Total</Text>
+                <Text style={styles.valueFont}>{formatMoney(booking.totalAmount)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Payment Type</Text>
+                <Text style={styles.valueFont}>{getPaymentTypeText(booking)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Pay Via</Text>
+                <Text style={styles.valueFont}>{booking.paymentMethod || '-'}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Amount Paid</Text>
+                <Text style={styles.valueFont}>{formatMoney(booking.amountPaid)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Balance</Text>
+                <Text style={styles.valueFont}>{formatMoney(booking.balancePayment)}</Text>
+              </View>
+              <View style={styles.detailRow}>
+                <Text style={styles.labelFont}>Payment Status</Text>
+                <Text style={[styles.valueFont, { color: paymentStatusColor(booking.paymentStatus) }]}>
+                  {booking.paymentStatus}
+                </Text>
+              </View>
+              {booking.transactionReference ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.labelFont}>Reference</Text>
+                  <Text style={styles.valueFont} numberOfLines={1}>{booking.transactionReference}</Text>
+                </View>
+              ) : null}
+              <View style={styles.rowDivider} />
+
+              {/* Bridal trial makeup add-on, when this booking has one */}
+              {booking.wantsTrialMakeup ? (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.labelFont}>Trial Makeup</Text>
+                    <Text style={styles.valueFont}>
+                      {formatDisplayDate(booking.trialMakeupDate || '')} at{' '}
+                      {formatDisplayTime(booking.trialMakeupTime || '')}
+                    </Text>
+                  </View>
+                  <View style={styles.rowDivider} />
+                </>
+              ) : null}
+
+              {/* Special requests / notes the customer left at checkout */}
+              {booking.notes ? (
+                <>
+                  <Text style={styles.labelFont}>Notes</Text>
+                  <Text style={styles.notesText}>{booking.notes}</Text>
+                  <View style={styles.rowDivider} />
+                </>
+              ) : null}
+            </>
+          )}
 
           {/* Action Buttons */}
           <View style={styles.buttonGroup}>
@@ -271,7 +563,7 @@ export default function AppointmentDetails() {
             {!actionsDisabled && !isPending && notStartedYet && (
               <Text style={styles.noticeText}>
                 This appointment hasn't started yet — it's scheduled for{' '}
-                {formatDisplayTime(rawTime)} on {formatDisplayDate(rawDate)}. You can mark it
+                {formatDisplayTime(effectiveTime)} on {formatDisplayDate(effectiveDate)}. You can mark it
                 completed once that time arrives. Cancelling is only possible before then.
               </Text>
             )}
@@ -447,6 +739,36 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#CCCCCC',
     width: '100%',
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    gap: 10,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#888888',
+  },
+  contactActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  iconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFE1EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notesText: {
+    fontSize: 15,
+    color: '#333333',
+    lineHeight: 21,
+    marginTop: 8,
+    marginBottom: 12,
   },
   buttonGroup: {
     marginTop: 45,

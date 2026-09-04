@@ -17,6 +17,8 @@ type Booking = {
   selectedTime: string;
   estimatedDuration?: number;
   totalAmount: number;
+  discountAmount?: number;
+  couponCode?: string | null;
   status: string;
   isPast: boolean;
 };
@@ -187,7 +189,19 @@ export default function AppointmentHistory() {
                   <Text style={styles.service} numberOfLines={1}>{serviceNames}</Text>
                   <View style={styles.cardBottom}>
                     <Text style={styles.date}>{formatDisplayDate(b.selectedDate)}</Text>
-                    <Text style={styles.amount}>LKR {(b.totalAmount || 0).toLocaleString()}</Text>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.amount}>LKR {(b.totalAmount || 0).toLocaleString()}</Text>
+                      {/* This total already has the coupon discount applied —
+                          flagged here so staff aren't confused about why it's
+                          lower than the listed service prices add up to, and
+                          know a Pay at Salon customer's balance is legitimately
+                          reduced, not undercharged. */}
+                      {!!b.discountAmount && b.discountAmount > 0 && (
+                        <Text style={styles.couponTag}>
+                          Coupon{b.couponCode ? ` ${b.couponCode}` : ''} applied
+                        </Text>
+                      )}
+                    </View>
                   </View>
                 </TouchableOpacity>
               );
@@ -244,6 +258,7 @@ const styles = StyleSheet.create({
   cardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   date: { fontSize: 12, color: '#999' },
   amount: { fontSize: 13, fontWeight: '600', color: '#333' },
+  couponTag: { fontSize: 10, fontWeight: '700', color: '#1E8A3C', marginTop: 2 },
   statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
   statusText: { fontSize: 11, fontWeight: '600' },
 });

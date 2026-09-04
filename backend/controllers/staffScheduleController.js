@@ -4,8 +4,9 @@ const Customer = require("../models/Customer");
 const Review = require("../models/Review");
 const LoyaltyAccount = require("../models/LoyaltyAccount");
 const StaffAvailabilityBlock = require("../models/StaffAvailabilityBlock");
-const { getBookingDateTime, normalizeBookingTime } = require("./bookingController");
+const { getBookingDateTime, normalizeBookingTime, refundBookingPayment } = require("./bookingController");
 const { createNotification } = require("./notificationController");
+const { awardPointsForBooking } = require("./loyaltyController");
 
 const getStaffId = (req) => {
   return req.staff?._id || req.staff?.id || null;
@@ -100,6 +101,52 @@ const getMyBookings = async (req, res) => {
     console.error("Get staff bookings error:", error);
 
     return res.status(500).json({ success: false, message: "Unable to load your schedule" });
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/*                    Full detail for one of staff's own bookings             */
+/* -------------------------------------------------------------------------- */
+
+// Fixed: schedule.tsx (the screen staff use to review a request and
+// Confirm/Decline it, or later mark it Completed/No-show) never
+// fetched anything of its own — every field it showed came from
+// whatever the calling list screen (Today's Jobs, My Schedule,
+// Upcoming Appointments, Appointment History, Home) happened to pass
+// as route params: customer name, service names, date/time, status.
+// That meant staff were confirming or declining brand new booking
+// requests with zero visibility into price, payment status, contact
+// info, or special notes — a real gap for a production app. This
+// endpoint gives that screen its own authoritative source of truth
+// instead of depending on every entry point to carry full state.
+const getBookingById = async (req, res) => {
+  try {
+    const staffId = getStaffId(req);
+    const { bookingId } = req.params;
+
+    if (!staffId) {
+      return res.status(401).json({ success: false, message: "Staff authentication is required" });
+    }
+
+    const booking = await Booking.findOne({
+      _id: bookingId,
+      "staff.staffId": String(staffId),
+    })
+      .populate("customer", "name email phone avatar")
+      .lean();
+
+    if (!booking) {
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found, or it isn't assigned to you",
+      });
+    }
+
+    return res.status(200).json({ success: true, booking });
+  } catch (error) {
+    console.error("Get staff booking by id error:", error);
+
+    return res.status(500).json({ success: false, message: "Unable to load this appointment" });
   }
 };
 
@@ -257,7 +304,32 @@ const updateBookingStatus = async (req, res) => {
     }
 
     booking.status = status;
+
+    // Same refund handling the customer's own cancelBooking uses
+    // (bookingController.js) — a staff-side cancel/decline is just as
+    // real a cancellation as a customer-initiated one, and this
+    // booking may have already been paid for online before staff ever
+    // reviewed it (advance/full payment happens at booking creation,
+    // before the Pending review step). No-show deliberately skips
+    // this — see refundBookingPayment's own comment.
+    const refund = status === "Cancelled"
+      ? await refundBookingPayment(booking)
+      : { refunded: false, amount: 0 };
+
     await booking.save();
+
+    // The real, trustworthy trigger for loyalty points: staff — not
+    // the customer — confirming the service actually happened. This
+    // used to only exist as a customer-facing self-report endpoint
+    // (markBookingCompleted, now removed from loyaltyController.js)
+    // built before this staff app existed; nothing in the app ever
+    // called it, so points never accrued through actual use. This is
+    // its real home now.
+    let loyaltyResult = null;
+
+    if (status === "Completed") {
+      loyaltyResult = await awardPointsForBooking(booking.customer, booking.totalAmount);
+    }
 
     // Customer-facing notification — distinct copy per transition,
     // including a softer "declined" message when a still-Pending
@@ -274,7 +346,9 @@ const updateBookingStatus = async (req, res) => {
       notification = {
         type: "booking_confirmed",
         title: "Appointment Completed",
-        message: `Your appointment on ${booking.selectedDate} has been marked completed. Thank you for visiting LimoSalon!`,
+        message: loyaltyResult
+          ? `Your appointment on ${booking.selectedDate} has been marked completed. You earned ${loyaltyResult.earnedPoints} points. Thank you for visiting LimoSalon!`
+          : `Your appointment on ${booking.selectedDate} has been marked completed. Thank you for visiting LimoSalon!`,
       };
     } else if (status === "No-show") {
       notification = {
@@ -286,13 +360,17 @@ const updateBookingStatus = async (req, res) => {
       notification = {
         type: "booking_cancelled",
         title: "Booking Request Declined",
-        message: `Sorry, your booking request for ${booking.selectedDate} at ${booking.selectedTime} couldn't be confirmed by the salon.`,
+        message: refund.refunded
+          ? `Sorry, your booking request for ${booking.selectedDate} at ${booking.selectedTime} couldn't be confirmed by the salon. LKR ${refund.amount.toLocaleString()} has been refunded to your original payment method.`
+          : `Sorry, your booking request for ${booking.selectedDate} at ${booking.selectedTime} couldn't be confirmed by the salon.`,
       };
     } else {
       notification = {
         type: "booking_cancelled",
         title: "Booking Cancelled",
-        message: `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the salon.`,
+        message: refund.refunded
+          ? `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the salon. LKR ${refund.amount.toLocaleString()} has been refunded to your original payment method.`
+          : `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the salon.`,
       };
     }
 
@@ -302,10 +380,23 @@ const updateBookingStatus = async (req, res) => {
       ...notification,
     });
 
+    if (loyaltyResult?.tierChanged) {
+      await createNotification({
+        customerId: booking.customer,
+        type: "tier_upgraded",
+        title: "Tier Upgraded!",
+        message: `Congratulations, you've reached ${loyaltyResult.account.tier} tier!`,
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: `Booking marked ${status}`,
       booking,
+      refund,
+      loyalty: loyaltyResult
+        ? { earnedPoints: loyaltyResult.earnedPoints, points: loyaltyResult.account.points, tier: loyaltyResult.account.tier }
+        : null,
     });
   } catch (error) {
     console.error("Update booking status error:", error);
@@ -752,6 +843,7 @@ const getHomeStats = async (req, res) => {
 
 module.exports = {
   getMyBookings,
+  getBookingById,
   updateBookingStatus,
   updateMyAvailability,
   getAvailabilityForDate,

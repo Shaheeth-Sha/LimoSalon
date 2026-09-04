@@ -5,6 +5,7 @@ const PaymentOtp = require("../models/PaymentOtp");
 const Payment = require("../models/Payment");
 const Customer = require("../models/Customer");
 const sendEmail = require("../utils/sendEmail");
+const { resolveAppliedCoupon, calculateCouponDiscount } = require("../utils/couponResolver");
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
 
@@ -68,10 +69,18 @@ const calculatePayment = ({
   selectedServices,
   bookingType,
   requestedPaymentOption,
+  appliedCoupon,
 }) => {
-  const total = Number(totalAmount);
+  // originalTotal is the real, undiscounted service value — the
+  // mandatory-advance threshold below is always checked against this,
+  // never the discounted amount, so a coupon can't be used to dodge
+  // it. Matches calculatePaymentDetails in bookingController.js, which
+  // MUST agree with this function: whatever gets charged to the
+  // customer's card here has to equal what createBooking later records
+  // as this booking's amountPaid.
+  const originalTotal = Number(totalAmount);
 
-  if (!Number.isFinite(total) || total <= 0) {
+  if (!Number.isFinite(originalTotal) || originalTotal <= 0) {
     throw new Error("A valid total amount is required");
   }
 
@@ -82,7 +91,7 @@ const calculatePayment = ({
 
   const advanceAvailable =
     isBridal ||
-    (!isBridal && total >= NON_BRIDAL_ADVANCE_MINIMUM);
+    (!isBridal && originalTotal >= NON_BRIDAL_ADVANCE_MINIMUM);
 
   const allowedPaymentOptions = advanceAvailable
     ? ["advance", "full"]
@@ -101,7 +110,7 @@ const calculatePayment = ({
       );
     }
 
-    if (total < NON_BRIDAL_ADVANCE_MINIMUM) {
+    if (originalTotal < NON_BRIDAL_ADVANCE_MINIMUM) {
       throw new Error(
         "Advance payment is available only for non-bridal bookings of LKR 10,000 or more"
       );
@@ -109,6 +118,18 @@ const calculatePayment = ({
 
     throw new Error("Invalid payment option");
   }
+
+  if (appliedCoupon?.discountType === "freeService") {
+    throw new Error(
+      "This reward must be redeemed in person at the salon and can't be applied online yet"
+    );
+  }
+
+  const discountAmount = appliedCoupon
+    ? calculateCouponDiscount(originalTotal, appliedCoupon)
+    : 0;
+
+  const total = roundMoney(originalTotal - discountAmount);
 
   const advanceRate = isBridal
     ? BRIDAL_ADVANCE_RATE
@@ -136,6 +157,9 @@ const calculatePayment = ({
     advanceRate,
     advancePercentage: Math.round(advanceRate * 100),
     paymentOption,
+    originalAmount: originalTotal,
+    discountAmount,
+    couponCode: appliedCoupon ? appliedCoupon.code : null,
     totalAmount: total,
     amountToPay,
     balancePayment,
@@ -391,6 +415,7 @@ const createPaymentIntent = async (req, res) => {
       bookingType,
       paymentOption,
       holdId,
+      couponCode,
     } = req.body;
 
 
@@ -401,6 +426,22 @@ const createPaymentIntent = async (req, res) => {
       });
     }
 
+    // Same code createBooking will resolve again at the end of this
+    // flow (bookingController.js) — resolving it here too is what lets
+    // the actual Stripe charge be for the correct, already-discounted
+    // amount instead of the full undiscounted total.
+    let appliedCoupon = null;
+
+    if (couponCode) {
+      try {
+        appliedCoupon = await resolveAppliedCoupon(couponCode, customerId);
+      } catch (couponError) {
+        return res.status(couponError.statusCode || 400).json({
+          success: false,
+          message: couponError.message,
+        });
+      }
+    }
 
     let paymentSummary;
 
@@ -411,6 +452,7 @@ const createPaymentIntent = async (req, res) => {
         selectedServices,
         bookingType,
         requestedPaymentOption: paymentOption,
+        appliedCoupon,
       });
 
     } catch (calculationError) {
@@ -480,6 +522,14 @@ const createPaymentIntent = async (req, res) => {
             String(
               paymentSummary.advancePercentage
             ),
+
+          couponCode:
+            paymentSummary.couponCode || "",
+
+          discountAmount:
+            String(
+              paymentSummary.discountAmount || 0
+            ),
         },
       });
 
@@ -537,6 +587,18 @@ console.log(
 
 
       paymentSummary: {
+
+        originalAmount:
+          paymentSummary.originalAmount,
+
+
+        discountAmount:
+          paymentSummary.discountAmount,
+
+
+        couponCode:
+          paymentSummary.couponCode,
+
 
         totalAmount:
           paymentSummary.totalAmount,

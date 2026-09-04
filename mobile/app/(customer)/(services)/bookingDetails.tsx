@@ -22,6 +22,9 @@ type Booking = {
   selectedTime: string;
   estimatedDuration?: number;
   totalAmount: number;
+  originalAmount?: number | null;
+  discountAmount?: number;
+  couponCode?: string | null;
   paymentOption: string;
   paymentMethod: string;
   advancePercentage?: number;
@@ -63,6 +66,19 @@ const getPaymentOptionText = (option: string, percentage?: number) => {
   return "-";
 };
 
+// Matches the staff app's statusColor() (home.tsx, today-jobs.tsx,
+// upcoming-appointments.tsx, appointment-history.tsx) and the customer
+// Bookings list's own pill colors — this screen used to render every
+// status in the same plain pink pill, which didn't match either side.
+const getStatusColors = (status: string) => {
+  if (status === "Cancelled") return { bg: "#FBE4E4", text: "#C13333" };
+  if (status === "Completed") return { bg: "#E4F7E9", text: "#1E8A3C" };
+  if (status === "No-show") return { bg: "#FBE9D2", text: "#B9791F" };
+  if (status === "Awaiting Completion") return { bg: "#FFF3D6", text: "#8A6D1F" };
+  if (status === "Pending") return { bg: "#DCEBFF", text: "#1D5FAB" };
+  return { bg: "#FDE4ED", text: "#FF2D75" };
+};
+
 export default function BookingDetails() {
   const router = useRouter();
   const { booking: bookingParam } = useLocalSearchParams<{ booking: string }>();
@@ -89,6 +105,7 @@ export default function BookingDetails() {
   }
 
   const displayStatus = booking.effectiveStatus || booking.status;
+  const statusColors = getStatusColors(displayStatus);
 
   return (
     <View style={styles.container}>
@@ -100,8 +117,8 @@ export default function BookingDetails() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        <View style={styles.statusPill}>
-          <Text style={styles.statusPillText}>{displayStatus}</Text>
+        <View style={[styles.statusPill, { backgroundColor: statusColors.bg }]}>
+          <Text style={[styles.statusPillText, { color: statusColors.text }]}>{displayStatus}</Text>
         </View>
 
         <View style={styles.card}>
@@ -154,6 +171,25 @@ export default function BookingDetails() {
             value={getPaymentOptionText(booking.paymentOption, booking.advancePercentage)}
           />
           <Row label="Pay Via" value={booking.paymentMethod || "-"} />
+
+          {/* Fixed: the discount/coupon a customer applied at checkout
+              used to vanish the instant the booking was created — the
+              server computed it just long enough to charge the right
+              amount, then never actually saved it anywhere (see
+              Booking.js). Now it's a real, persisted part of the
+              booking record, so it shows up here every time this
+              screen is opened, not just in the checkout flow itself. */}
+          {!!booking.discountAmount && booking.discountAmount > 0 && (
+            <>
+              <Row label="Original Amount" value={formatMoney(booking.originalAmount ?? booking.totalAmount + booking.discountAmount)} />
+              <Row
+                label={`Coupon${booking.couponCode ? ` (${booking.couponCode})` : ""}`}
+                value={`-${formatMoney(booking.discountAmount)}`}
+                valueColor="#1E8A3C"
+              />
+            </>
+          )}
+
           <Row label="Total" value={formatMoney(booking.totalAmount)} />
           <Row label="Amount Paid" value={formatMoney(booking.amountPaid)} />
           <Row label="Balance" value={formatMoney(booking.balancePayment)} />
@@ -185,13 +221,23 @@ export default function BookingDetails() {
   );
 }
 
-function Row({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
+function Row({
+  label,
+  value,
+  icon,
+  valueColor,
+}: {
+  label: string;
+  value: string;
+  icon?: React.ReactNode;
+  valueColor?: string;
+}) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
       <View style={{ flexDirection: "row", alignItems: "center" }}>
         {icon}
-        <Text style={styles.rowValue}>{value}</Text>
+        <Text style={[styles.rowValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
       </View>
     </View>
   );

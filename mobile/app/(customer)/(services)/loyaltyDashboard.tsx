@@ -9,9 +9,11 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons, Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BASE_URL } from "../../../config/api";
+import { getTierGradient, getTierAccent, getTierBorder } from "../../../utils/tierTheme";
 
 const DASHBOARD_API = `${BASE_URL}/api/loyalty/dashboard`;
 
@@ -30,13 +32,6 @@ type LoyaltyData = {
     pointsNeeded: number;
     appointmentsAway: number | null;
   } | null;
-};
-
-const TIER_COLORS: Record<string, string> = {
-  Bronze: "#8A5A2B",
-  Silver: "#8A8A8A",
-  Gold: "#B8860B",
-  Platinum: "#5B4B8A",
 };
 
 export default function LoyaltyDashboard() {
@@ -83,7 +78,12 @@ export default function LoyaltyDashboard() {
     loadDashboard();
   }, []);
 
-  const tierColor = loyalty ? TIER_COLORS[loyalty.tier] || "#8A1230" : "#8A1230";
+  // Same premium-card gradient theme used on Home and the physical
+  // Membership Card, kept consistent across all three so a customer's
+  // tier always looks the same everywhere it's shown.
+  const tierGradient = getTierGradient(loyalty?.tier);
+  const tierAccent = getTierAccent(loyalty?.tier);
+  const tierBorder = getTierBorder(loyalty?.tier);
 
   // Same derivation as membershipCard.tsx, kept consistent across
   // both screens rather than duplicating slightly different logic.
@@ -114,7 +114,12 @@ export default function LoyaltyDashboard() {
         </View>
       ) : loyalty ? (
         <ScrollView showsVerticalScrollIndicator={false}>
-          <View style={[styles.tierCard, { backgroundColor: tierColor }]}>
+          <LinearGradient
+            colors={tierGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.tierCard, { borderColor: tierBorder }]}
+          >
             <View style={styles.tierTopRow}>
               <View>
                 <Text style={styles.tierLabel}>{loyalty.tier} Member</Text>
@@ -129,11 +134,13 @@ export default function LoyaltyDashboard() {
               </View>
 
               <View style={styles.crownCircle}>
-                <MaterialCommunityIcons name="crown" size={32} color="#FFD166" />
+                <MaterialCommunityIcons name="crown" size={32} color={tierAccent} />
               </View>
             </View>
 
-            <Text style={styles.pointsValue}>{loyalty.points} Points</Text>
+            <Text style={[styles.pointsValue, { color: tierAccent }]}>
+              {loyalty.points} Points
+            </Text>
 
             <Text style={styles.visitsLabel}>
               {loyalty.nextTierThreshold
@@ -147,7 +154,7 @@ export default function LoyaltyDashboard() {
                   <View
                     style={[
                       styles.progressFill,
-                      { width: `${progressPercent}%` },
+                      { width: `${progressPercent}%`, backgroundColor: tierAccent },
                     ]}
                   />
                 </View>
@@ -161,7 +168,7 @@ export default function LoyaltyDashboard() {
                 You've reached the highest tier!
               </Text>
             )}
-          </View>
+          </LinearGradient>
 
           <Text style={styles.sectionTitle}>My Overview</Text>
 
@@ -257,7 +264,17 @@ const styles = StyleSheet.create({
   headerText: { fontSize: 18, fontWeight: "700", marginLeft: 10 },
   loaderBox: { flex: 1, justifyContent: "center", alignItems: "center" },
 
-  tierCard: { borderRadius: 16, padding: 20, marginBottom: 20 },
+  tierCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 20,
+    marginBottom: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 5,
+  },
   tierTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   tierLabel: { fontSize: 20, fontWeight: "800", color: "#fff" },
   memberIdText: { fontSize: 12, color: "#fff", opacity: 0.9, marginTop: 6 },

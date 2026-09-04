@@ -1,9 +1,9 @@
 import { useState, useCallback } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { resolveAvatarUrl } from "../../../utils/resolveAvatarUrl";
+import Avatar from "../../../components/Avatar";
 
 interface CustomerData {
   id: string;
@@ -49,16 +49,10 @@ export default function Profile() {
     router.replace("/(customer)/(auth)/login");
   };
 
-  const getInitials = (name: string) => {
-    const parts = name.trim().split(" ");
-    if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
-    return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
-  };
-
   if (loading) {
     return (
       <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color="#ff2d55" />
+        <ActivityIndicator size="large" color="#FF2D75" />
       </View>
     );
   }
@@ -93,15 +87,11 @@ export default function Profile() {
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Avatar */}
+      {/* Avatar — same shared component every other screen uses to show
+          this person's photo, so the customer's own profile tab matches
+          how their photo already looks everywhere else in the app. */}
       <View style={styles.avatarContainer}>
-        <View style={styles.avatar}>
-          {resolveAvatarUrl(customer.avatar) ? (
-            <Image source={{ uri: resolveAvatarUrl(customer.avatar)! }} style={styles.avatarImage} />
-          ) : (
-            <Text style={styles.avatarInitials}>{getInitials(customer.name)}</Text>
-          )}
-        </View>
+        <Avatar uri={customer.avatar} name={customer.name} size={90} />
         <TouchableOpacity
           style={styles.editIcon}
           activeOpacity={0.8}
@@ -194,27 +184,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  avatar: {
-    backgroundColor: "#f5b6c6",
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    justifyContent: "center",
-    alignItems: "center",
-    overflow: "hidden",
-  },
-
-  avatarImage: {
-    width: "100%",
-    height: "100%",
-  },
-
-  avatarInitials: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#7a1f33",
-  },
-
   editIcon: {
     position: "absolute",
     bottom: 0,
@@ -250,7 +219,7 @@ const styles = StyleSheet.create({
   },
 
   edit: {
-    color: "#ff2d55",
+    color: "#FF2D75",
     fontWeight: "500",
   },
 
@@ -274,9 +243,9 @@ const styles = StyleSheet.create({
 
   /* SAME BUTTON STYLE FOR BOTH */
   primaryBtn: {
-    backgroundColor: "#ff2d55",
+    backgroundColor: "#FF2D75",
     padding: 14,
-    borderRadius: 10,
+    borderRadius: 25,
     marginTop: 10,
     alignItems: "center",
   },

@@ -8,9 +8,11 @@ import {
   Modal,
 } from "react-native";
 import { Ionicons, Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { BASE_URL } from "../../../config/api";
+import { getTierGradient, getTierAccent, getTierBorder } from "../../../utils/tierTheme";
 
 const DASHBOARD_API = `${BASE_URL}/api/loyalty/dashboard`;
 const PROFILE_API = `${BASE_URL}/api/customers/profile`;
@@ -88,10 +90,21 @@ export default function MembershipCard() {
         </View>
       ) : (
         <>
-          <View style={styles.card}>
+          {/* Fixed: this card used to be a single hardcoded gold color
+              for every customer regardless of their actual tier — a
+              Bronze member and a Platinum member saw the identical
+              card. Now it uses the same tier-based premium gradient as
+              Home and the Loyalty Dashboard, so all three always agree
+              on what this customer's real tier looks like. */}
+          <LinearGradient
+            colors={getTierGradient(tier)}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={[styles.card, { borderColor: getTierBorder(tier) }]}
+          >
             <View style={styles.cardTopRow}>
               <Text style={styles.tierLabel}>{tier.toUpperCase()} MEMBER</Text>
-              <MaterialCommunityIcons name="crown" size={28} color="#FFD166" />
+              <MaterialCommunityIcons name="crown" size={28} color={getTierAccent(tier)} />
             </View>
 
             <Text style={styles.name}>{customerName}</Text>
@@ -106,18 +119,20 @@ export default function MembershipCard() {
                 : "-"}
             </Text>
 
-            <View style={styles.barcodeBox}>
-              {Array.from({ length: 28 }).map((_, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.barcodeLine,
-                    { width: i % 3 === 0 ? 3 : 1.5 },
-                  ]}
-                />
-              ))}
+            <View style={styles.barcodeStrip}>
+              <View style={styles.barcodeBox}>
+                {Array.from({ length: 28 }).map((_, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.barcodeLine,
+                      { width: i % 3 === 0 ? 3 : 1.5 },
+                    ]}
+                  />
+                ))}
+              </View>
             </View>
-          </View>
+          </LinearGradient>
 
           <Text style={styles.sectionTitle}>Membership Benefits</Text>
 
@@ -168,7 +183,15 @@ const styles = StyleSheet.create({
   loaderBox: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   card: {
-    backgroundColor: "#B8860B", borderRadius: 18, padding: 22, marginBottom: 24,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 22,
+    marginBottom: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 6,
   },
   cardTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   tierLabel: { color: "#fff", fontWeight: "800", fontSize: 13, letterSpacing: 1 },
@@ -176,7 +199,17 @@ const styles = StyleSheet.create({
   memberId: { color: "#fff", fontSize: 13, opacity: 0.9, marginTop: 6 },
   since: { color: "#fff", fontSize: 12, opacity: 0.8, marginTop: 2 },
 
-  barcodeBox: { flexDirection: "row", alignItems: "center", marginTop: 22, gap: 2 },
+  // A light backing strip behind the barcode — like the printed white
+  // barcode strip on a real membership/loyalty card — so the bars stay
+  // legible no matter how dark or light the tier gradient behind them is.
+  barcodeStrip: {
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    marginTop: 22,
+  },
+  barcodeBox: { flexDirection: "row", alignItems: "center", gap: 2 },
   barcodeLine: { height: 34, backgroundColor: "#111" },
 
   sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 10 },

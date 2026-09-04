@@ -6,8 +6,10 @@ const Customer = require("../models/Customer");
 const Staff = require("../models/Staff");
 const StaffAvailabilityBlock = require("../models/StaffAvailabilityBlock");
 const ClaimedReward = require("../models/ClaimedReward");
+const { resolveAppliedCoupon, calculateCouponDiscount } = require("../utils/couponResolver");
 const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
+const stripe = require("../utils/stripeClient");
 const { createNotification } = require("./notificationController");
 
 const HOLD_DURATION_MINUTES = 10;
@@ -36,6 +38,55 @@ const OTHER_ADVANCE_RATE = 0.1;
 
 const roundMoney = (value) => {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+};
+
+// Real-world refund handling for a booking that's just been cancelled
+// (customer cancelling it themselves, or staff cancelling/declining
+// it — both routes call this, see cancelBooking here and
+// updateBookingStatus in staffScheduleController.js). Only a booking
+// that actually had money move through Stripe — "Paid" or "Partially
+// Paid" via advance/full online payment, with a real
+// stripePaymentIntentId on file — has anything to refund. A "Pay at
+// Salon" booking never charged anything up front, so there's nothing
+// to send back.
+//
+// Deliberately NOT called for a No-show: that's the customer's own
+// no-show, not a cancellation, and the salon held the slot for them —
+// the deposit is forfeited, matching standard real-world salon policy.
+//
+// Mutates the passed-in (unsaved) booking document in place so the
+// caller's single booking.save() picks up the refund fields alongside
+// the status change — it does not save on its own.
+const refundBookingPayment = async (booking) => {
+  const isRefundable =
+    (booking.paymentStatus === "Paid" || booking.paymentStatus === "Partially Paid") &&
+    Boolean(booking.stripePaymentIntentId);
+
+  if (!isRefundable) {
+    return { refunded: false, amount: 0 };
+  }
+
+  try {
+    const refundAmount = booking.amountPaid;
+
+    const refund = await stripe.refunds.create({
+      payment_intent: booking.stripePaymentIntentId,
+    });
+
+    booking.paymentStatus = "Refunded";
+    booking.refundedAt = new Date();
+    booking.stripeRefundId = refund.id;
+
+    return { refunded: true, amount: refundAmount };
+  } catch (error) {
+    // Don't let a Stripe-side failure block the cancellation itself —
+    // the booking still needs to be cancelled either way. paymentStatus
+    // is deliberately left untouched on failure so the booking record
+    // still honestly shows money is owed back, and staff can chase the
+    // refund manually from the Stripe dashboard.
+    console.error("Stripe refund failed for booking", booking._id, error.message);
+    return { refunded: false, amount: 0, error: error.message };
+  }
 };
 
 const formatMoneyForEmail = (amount) =>
@@ -499,13 +550,7 @@ const calculatePaymentDetails = ({
   let discountAmount = 0;
 
   if (appliedCoupon) {
-    if (appliedCoupon.discountType === "percentage") {
-      discountAmount = roundMoney(
-        originalTotal * (Number(appliedCoupon.discountValue) / 100)
-      );
-    } else if (appliedCoupon.discountType === "fixed") {
-      discountAmount = Number(appliedCoupon.discountValue);
-    } else {
+    if (appliedCoupon.discountType === "freeService") {
       // freeService coupons don't reduce a total automatically —
       // there's no way to know which selected service should be
       // "free" without additional UI for the customer to specify
@@ -517,8 +562,10 @@ const calculatePaymentDetails = ({
       );
     }
 
-    // Never let a discount exceed the booking's own value.
-    discountAmount = Math.min(roundMoney(discountAmount), originalTotal);
+    // Shared with paymentController.js's createPaymentIntent — both
+    // must compute the exact same discount for the same code, or the
+    // Stripe charge and this booking's own amountPaid would disagree.
+    discountAmount = calculateCouponDiscount(originalTotal, appliedCoupon);
   }
 
   const total = roundMoney(originalTotal - discountAmount);
@@ -1003,26 +1050,20 @@ const createBooking = async (req, res) => {
       });
     }
 
-    let appliedCoupon = null;
+    // Resolves to either the customer's own claimed loyalty reward or a
+    // salon-wide promotional Coupon — see couponResolver.js. `applied`
+    // here is the resolver's wrapper ({ source, doc, discountType,
+    // discountValue, code }); calculatePaymentDetails below only needs
+    // the discount fields, so it's passed through as `appliedCoupon`.
+    let applied = null;
 
     if (couponCode) {
-      appliedCoupon = await ClaimedReward.findOne({
-        code: String(couponCode).trim().toUpperCase(),
-        customer: customerId,
-        redeemedAt: null,
-      });
-
-      if (!appliedCoupon) {
-        return res.status(400).json({
+      try {
+        applied = await resolveAppliedCoupon(couponCode, customerId);
+      } catch (error) {
+        return res.status(error.statusCode || 400).json({
           success: false,
-          message: "This coupon code is invalid or has already been used",
-        });
-      }
-
-      if (appliedCoupon.expiresAt && appliedCoupon.expiresAt.getTime() < Date.now()) {
-        return res.status(400).json({
-          success: false,
-          message: "This coupon code has expired",
+          message: error.message,
         });
       }
     }
@@ -1037,7 +1078,7 @@ const createBooking = async (req, res) => {
         requestedPaymentOption: paymentOption,
         requestedPaymentMethod: paymentMethod,
         paymentConfirmed,
-        appliedCoupon,
+        appliedCoupon: applied,
       });
     } catch (error) {
       return res.status(400).json({ success: false, message: error.message });
@@ -1193,11 +1234,14 @@ const createBooking = async (req, res) => {
 
     // Mark the coupon redeemed only now that the booking genuinely
     // exists — if anything above had failed, the coupon must remain
-    // usable, not get silently burned for nothing.
-    if (appliedCoupon) {
-      appliedCoupon.redeemedAt = new Date();
-      appliedCoupon.redeemedOnBooking = booking._id;
-      await appliedCoupon.save();
+    // usable, not get silently burned for nothing. Only a claimed
+    // loyalty reward is single-use like this; a salon-wide promo
+    // Coupon is meant to be reusable by any customer until it expires,
+    // so it's never marked redeemed here.
+    if (applied?.source === "claimedReward") {
+      applied.doc.redeemedAt = new Date();
+      applied.doc.redeemedOnBooking = booking._id;
+      await applied.doc.save();
     }
 
     await sendBookingEmail({ customerId, booking });
@@ -1408,32 +1452,137 @@ const cancelBooking = async (req, res) => {
       return res.status(400).json({ success: false, message: "Completed bookings cannot be cancelled" });
     }
 
+    // Fixed: this used to be the only two checks here, unlike the
+    // staff-side cancel path (updateBookingStatus in
+    // staffScheduleController.js), which also refuses to cancel once
+    // the appointment's scheduled time has already passed. Without
+    // this, a customer could "cancel" — and trigger a real refund on
+    // — a booking that already happened but hadn't been marked
+    // Completed yet, or one staff had already marked a "No-show"
+    // specifically because they forfeit their deposit for not
+    // showing up. Either way, the customer would get their money back
+    // for a slot the salon had already honored or held open for them.
+    if (booking.status === "No-show") {
+      return res.status(400).json({
+        success: false,
+        message: "This appointment was already marked as a no-show and can't be cancelled",
+      });
+    }
+
+    try {
+      const bookingDateTime = getBookingDateTime(booking.selectedDate, booking.selectedTime);
+
+      if (bookingDateTime.getTime() <= Date.now()) {
+        return res.status(400).json({
+          success: false,
+          message: "This appointment's scheduled time has already passed and can no longer be cancelled. Please contact the salon directly.",
+        });
+      }
+    } catch (parseError) {
+      // An unparsable date/time shouldn't block a legitimate
+      // cancellation — same "don't crash over one bad record"
+      // tolerance the reminder service and staff-side checks use.
+      console.error("Failed to parse booking date/time for cancel check:", parseError.message);
+    }
+
     booking.status = "Cancelled";
+    const refund = await refundBookingPayment(booking);
     await booking.save();
+
+    const customerMessage = refund.refunded
+      ? `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} has been cancelled. LKR ${refund.amount.toLocaleString()} has been refunded to your original payment method.`
+      : `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} has been cancelled.`;
 
     await createNotification({
       customerId,
       type: "booking_cancelled",
       title: "Booking Cancelled",
-      message: `Your appointment on ${booking.selectedDate} at ${booking.selectedTime} has been cancelled.`,
+      message: customerMessage,
       relatedBooking: booking._id,
     });
 
     if (booking.staff?.staffId) {
+      const staffMessage = refund.refunded
+        ? `The appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the customer. LKR ${refund.amount.toLocaleString()} was automatically refunded.`
+        : `The appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the customer.`;
+
       await createNotification({
         staffId: booking.staff.staffId,
         type: "booking_cancelled_by_customer",
         title: "Booking Cancelled",
-        message: `The appointment on ${booking.selectedDate} at ${booking.selectedTime} was cancelled by the customer.`,
+        message: staffMessage,
         relatedBooking: booking._id,
       });
     }
 
-    return res.status(200).json({ success: true, message: "Booking cancelled", booking });
+    return res.status(200).json({ success: true, message: "Booking cancelled", booking, refund });
   } catch (error) {
     console.error("Cancel booking error:", error);
 
     return res.status(500).json({ success: false, message: "Unable to cancel the booking" });
+  }
+};
+
+/* -------------------------------------------------------------------------- */
+/*                    Preview a coupon code before checkout                   */
+/* -------------------------------------------------------------------------- */
+
+// Lets payment.tsx show the real discount the moment the customer taps
+// "Apply", before they've picked a payment method or created a Stripe
+// hold — doesn't touch Stripe or burn the coupon, just resolves the
+// code and reports what createBooking (or createPaymentIntent, for a
+// card payment) would actually apply. The authoritative discount is
+// still always recomputed server-side at the point of charge/booking —
+// this is a preview only, never trusted on its own for the real total.
+const validateCoupon = async (req, res) => {
+  try {
+    const customerId = getCustomerId(req);
+
+    if (!customerId) {
+      return res.status(401).json({ success: false, message: "Customer authentication is required" });
+    }
+
+    const { couponCode, totalAmount } = req.body;
+
+    const originalTotal = Number(totalAmount);
+
+    if (!Number.isFinite(originalTotal) || originalTotal <= 0) {
+      return res.status(400).json({ success: false, message: "A valid total amount is required" });
+    }
+
+    let applied;
+
+    try {
+      applied = await resolveAppliedCoupon(couponCode, customerId);
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ success: false, message: error.message });
+    }
+
+    if (!applied) {
+      return res.status(400).json({ success: false, message: "Enter a coupon code" });
+    }
+
+    if (applied.discountType === "freeService") {
+      return res.status(400).json({
+        success: false,
+        message: "This reward must be redeemed in person at the salon and can't be applied online yet",
+      });
+    }
+
+    const discountAmount = calculateCouponDiscount(originalTotal, applied);
+
+    return res.status(200).json({
+      success: true,
+      code: applied.code,
+      discountType: applied.discountType,
+      discountValue: applied.discountValue,
+      discountAmount,
+      discountedTotal: roundMoney(originalTotal - discountAmount),
+    });
+  } catch (error) {
+    console.error("Validate coupon error:", error);
+
+    return res.status(500).json({ success: false, message: "Unable to validate this coupon code" });
   }
 };
 
@@ -1640,4 +1789,6 @@ module.exports = {
   rescheduleBooking,
   getBookingDateTime,
   normalizeBookingTime,
+  refundBookingPayment,
+  validateCoupon,
 };

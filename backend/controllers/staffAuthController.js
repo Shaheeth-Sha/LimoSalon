@@ -373,6 +373,90 @@ const resetStaffPassword = async (req, res) => {
 };
 
 /* =========================
+   ADMIN: INVITE STAFF TO THE STAFF APP
+   (the "real world" counterpart to admin-typed passwords — the
+   admin never sees/sets the actual password, they just trigger an
+   email; the staff member proves ownership of that inbox and picks
+   their own password)
+========================= */
+const inviteStaff = async (req, res) => {
+  try {
+    const { staffId } = req.params;
+
+    const staff = await Staff.findById(staffId);
+
+    if (!staff) {
+      return res.status(404).json({ success: false, message: "Staff not found" });
+    }
+
+    if (!staff.email) {
+      return res.status(400).json({
+        success: false,
+        message: "Add an e-mail address for this staff member before inviting them",
+      });
+    }
+
+    const normalizedEmail = staff.email.toLowerCase().trim();
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+    // Deliberately reuses the exact same EmailOtp purpose and record
+    // shape as forgotStaffPassword. An "activate your account" code
+    // and a "reset your password" code are the same thing underneath
+    // — prove you own this inbox, then set a password — so the staff
+    // app's existing Forgot Password screens (forgot.tsx -> email.tsx
+    // -> new-password.tsx) already work for first-time activation
+    // with zero mobile changes. Those screens call forgot-password /
+    // verify-reset-otp / reset-password, none of which care whether
+    // the staff member had a password before.
+    await EmailOtp.deleteMany({
+      email: normalizedEmail,
+      purpose: "staff-password-reset",
+    });
+
+    await EmailOtp.create({
+      email: normalizedEmail,
+      otp,
+      purpose: "staff-password-reset",
+      verified: false,
+      // Longer window than a routine self-service reset — this code
+      // may be read off a screen or forwarded rather than acted on
+      // within a couple of minutes.
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+    });
+
+    await sendEmail({
+      to: normalizedEmail,
+      subject: "You're invited to the LimoSalon Staff App",
+      html: `
+        <h2>Welcome to LimoSalon, ${staff.name}!</h2>
+        <p>Your admin has added you to the LimoSalon Staff App. To activate your account:</p>
+        <ol>
+          <li>Open the Staff App and go to the login screen</li>
+          <li>Tap "Forgot password?"</li>
+          <li>Enter your e-mail: <strong>${normalizedEmail}</strong></li>
+          <li>Enter this code when asked: <h1>${otp}</h1></li>
+          <li>Choose your own password</li>
+        </ol>
+        <p>This code expires in 30 minutes. If you weren't expecting this, you can ignore this email.</p>
+      `,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Invite sent to ${normalizedEmail}`,
+    });
+  } catch (error) {
+    console.error("Invite staff error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send invite",
+      error: error.message,
+    });
+  }
+};
+
+/* =========================
    UPDATE / REMOVE PROFILE PHOTO
 ========================= */
 const updateStaffAvatar = async (req, res) => {
@@ -446,4 +530,5 @@ module.exports = {
   forgotStaffPassword,
   verifyStaffResetOtp,
   resetStaffPassword,
+  inviteStaff,
 };

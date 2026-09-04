@@ -90,6 +90,9 @@ export default function BookingSuccess() {
     selectedStaff,
     bookingType,
     totalAmount,
+    originalAmount,
+    discountAmount,
+    couponCode,
     advancePayment,
     amountPaid,
     balancePayment,
@@ -123,6 +126,13 @@ export default function BookingSuccess() {
   );
 
   const total = Number(getParamValue(totalAmount)) || 0;
+
+  // Now a real persisted field on the booking (see Booking.js) —
+  // previously computed just long enough to charge the right amount,
+  // then lost, so this confirmation screen could never have shown it.
+  const discount = Number(getParamValue(discountAmount)) || 0;
+  const original = Number(getParamValue(originalAmount)) || total + discount;
+  const couponCodeText = getParamValue(couponCode);
 
   const paidAmount =
     Number(getParamValue(amountPaid)) ||
@@ -385,6 +395,21 @@ export default function BookingSuccess() {
           value={normalizedPaymentMethod}
         />
 
+        {discount > 0 && (
+          <>
+            <DetailRow
+              label="Original Amount"
+              value={formatMoney(original)}
+            />
+
+            <DetailRow
+              label={couponCodeText ? `Coupon (${couponCodeText})` : "Coupon Discount"}
+              value={`-${formatMoney(discount)}`}
+              valueColor="#1E8A3C"
+            />
+          </>
+        )}
+
         <DetailRow
           label="Total"
           value={formatMoney(total)}
@@ -419,6 +444,25 @@ export default function BookingSuccess() {
             {normalizedPaymentStatus}
           </Text>
         </View>
+
+        {/* Every booking lands here straight after being created, which
+            always starts it as "Pending" (see Booking.js) — so on this
+            one screen, "Payment Status: Paid" and "Booking Requested"
+            above are never actually contradictory, just two different
+            things (money collected vs. appointment confirmed) shown
+            together for the first time. Spelling that out here so it
+            doesn't read as a bug — this app deliberately charges online
+            payments at booking time rather than waiting on staff to
+            confirm first, same as most real salon booking apps, with
+            the automatic refund (see refundBookingPayment in
+            bookingController.js) as the safety net if it's declined. */}
+        {(normalizedPaymentStatus === "Paid" ||
+          normalizedPaymentStatus === "Partially Paid") && (
+          <Text style={styles.paymentNote}>
+            Your payment has been received — you'll be notified as soon
+            as the salon confirms your appointment.
+          </Text>
+        )}
 
         {getParamValue(transactionReference) ? (
           <DetailRow
@@ -463,11 +507,13 @@ export default function BookingSuccess() {
 type DetailRowProps = {
   label: string;
   value: string;
+  valueColor?: string;
 };
 
 function DetailRow({
   label,
   value,
+  valueColor,
 }: DetailRowProps) {
   return (
     <View style={styles.row}>
@@ -477,7 +523,7 @@ function DetailRow({
 
       <Text style={styles.colon}>:</Text>
 
-      <Text style={styles.value}>
+      <Text style={[styles.value, valueColor ? { color: valueColor } : null]}>
         {value}
       </Text>
     </View>
@@ -563,6 +609,15 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#111111",
     lineHeight: 20,
+  },
+
+  paymentNote: {
+    fontSize: 12,
+    fontStyle: "italic",
+    color: "#4A1626",
+    lineHeight: 17,
+    marginTop: -4,
+    marginBottom: 14,
   },
 
   sectionDivider: {

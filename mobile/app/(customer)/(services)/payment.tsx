@@ -12,6 +12,7 @@ import {
   ScrollView,
   Modal,
   ActivityIndicator,
+  TextInput,
 } from "react-native";
 import { Ionicons, Feather } from "@expo/vector-icons";
 import {
@@ -24,6 +25,9 @@ import { BASE_URL } from "../../../config/api";
 
 const BOOKING_API =
   `${BASE_URL}/api/bookings`;
+
+const VALIDATE_COUPON_API =
+  `${BASE_URL}/api/bookings/validate-coupon`;
 
 const NON_BRIDAL_ADVANCE_MINIMUM = 10000;
 const BRIDAL_ADVANCE_RATE = 0.2;
@@ -230,6 +234,20 @@ export default function Payment() {
     useState<PaymentMethod>("");
   const [loading, setLoading] = useState(false);
 
+  // Claimed-reward codes (from My Rewards) and salon-wide promo codes
+  // (from Coupons & Offers) both resolve through the same backend
+  // endpoint — see validateCoupon in bookingController.js. Preview
+  // only: the real discount is always recomputed server-side, here
+  // this just lets the customer see it before committing to a payment
+  // method.
+  const [couponCode, setCouponCode] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    discountAmount: number;
+  } | null>(null);
+  const [couponError, setCouponError] = useState("");
+  const [applyingCoupon, setApplyingCoupon] = useState(false);
+
   const services = useMemo(
     () => safeJsonParse<ServiceItem[]>(selectedServices, []),
     [selectedServices]
@@ -289,8 +307,18 @@ export default function Payment() {
       ? OTHER_ADVANCE_RATE
       : 0;
 
+  // Whether an advance is REQUIRED at all is always decided from the
+  // original, undiscounted total (advanceAvailable/payAtSalonAllowed
+  // above) — a coupon can never be used to dodge that policy, matching
+  // calculatePaymentDetails in bookingController.js. The actual advance
+  // AMOUNT shown, though, is a percentage of what will really be owed
+  // after the coupon, so this display doesn't overstate it.
+  const discountedTotal = appliedCoupon
+    ? Math.max(0, roundMoney(total - appliedCoupon.discountAmount))
+    : total;
+
   const advancePayment = advanceAvailable
-    ? roundMoney(total * advanceRate)
+    ? roundMoney(discountedTotal * advanceRate)
     : 0;
 
   const payAtSalonAllowed =
@@ -426,6 +454,48 @@ export default function Payment() {
     (await AsyncStorage.getItem("customerToken")) ||
     (await AsyncStorage.getItem("token"));
 
+  const applyCoupon = async () => {
+    const trimmedCode = couponCode.trim();
+    if (!trimmedCode || applyingCoupon) return;
+
+    try {
+      setApplyingCoupon(true);
+      setCouponError("");
+
+      const token = await getToken();
+
+      const response = await fetch(VALIDATE_COUPON_API, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ couponCode: trimmedCode, totalAmount: total }),
+      });
+
+      const data = await readJsonResponse(response);
+
+      if (!response.ok) {
+        setAppliedCoupon(null);
+        setCouponError(data.message || "Invalid or expired coupon code");
+        return;
+      }
+
+      setAppliedCoupon({ code: data.code, discountAmount: data.discountAmount });
+    } catch (error) {
+      setAppliedCoupon(null);
+      setCouponError("Unable to check this code right now. Please try again.");
+    } finally {
+      setApplyingCoupon(false);
+    }
+  };
+
+  const removeCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponCode("");
+    setCouponError("");
+  };
+
   const validateBookingDetails = (): boolean => {
     if (!holdIdText) {
       showAlert(
@@ -544,6 +614,7 @@ export default function Payment() {
           bookingType: bookingTypeText,
           paymentOption: "salon",
           paymentMethod: "Pay at Salon",
+          couponCode: appliedCoupon?.code || undefined,
           // Only ever meaningfully set for bridal bookings (pay-at-salon
           // isn't even offered to bridal, but forwarding unconditionally
           // keeps this call consistent with cardPayment.tsx's body).
@@ -578,6 +649,11 @@ export default function Payment() {
           selectedStaff: selectedStaffText,
           bookingType: bookingTypeText,
           totalAmount: String(createdBooking?.totalAmount ?? total),
+          // Now real, persisted fields on the booking (see Booking.js)
+          // instead of being lost right after checkout.
+          originalAmount: String(createdBooking?.originalAmount ?? total),
+          discountAmount: String(createdBooking?.discountAmount || 0),
+          couponCode: createdBooking?.couponCode || "",
           advancePayment: String(
             createdBooking?.advancePayment ?? 0
           ),
@@ -652,6 +728,17 @@ export default function Payment() {
         advancePayment: String(advancePayment),
         paymentRequired: String(advanceAvailable),
         paymentMethod: "Credit/Debit Card",
+        // totalAmount above is always the ORIGINAL, undiscounted value
+        // — cardPayment.tsx forwards both it and this code unchanged to
+        // create-payment-intent and createBooking, which each resolve
+        // the actual discount themselves (see couponResolver.js). The
+        // client never computes or sends a pre-discounted total.
+        couponCode: appliedCoupon?.code || "",
+        // For display only on cardPayment.tsx (so its advance/full
+        // totals reflect the discount) — the actual Stripe charge and
+        // booking record are always computed server-side from
+        // couponCode above, never trusted from this value.
+        couponDiscountAmount: String(appliedCoupon?.discountAmount || 0),
         wantsTrialMakeup: wantsTrialMakeupText,
         trialMakeupDate: trialMakeupDateText,
         trialMakeupTime: trialMakeupTimeText,
@@ -809,9 +896,77 @@ export default function Payment() {
           );
         })}
 
+        <View style={styles.couponBox}>
+          <Text style={styles.couponLabel}>Have a coupon or reward code?</Text>
+
+          {appliedCoupon ? (
+            <View style={styles.couponAppliedRow}>
+              <View style={styles.couponAppliedTextBox}>
+                <Ionicons name="pricetag" size={16} color="#1E8A3C" />
+                <Text style={styles.couponAppliedText} numberOfLines={2}>
+                  "{appliedCoupon.code}" applied — you save {formatMoney(appliedCoupon.discountAmount)}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={removeCoupon} disabled={loading} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Text style={styles.couponRemoveText}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.couponInputRow}>
+              <TextInput
+                style={styles.couponInput}
+                placeholder="Enter code"
+                placeholderTextColor="#999"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                value={couponCode}
+                onChangeText={(text) => {
+                  setCouponCode(text);
+                  if (couponError) setCouponError("");
+                }}
+                editable={!loading}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.couponApplyBtn,
+                  (!couponCode.trim() || applyingCoupon) && styles.disabledButton,
+                ]}
+                disabled={!couponCode.trim() || applyingCoupon || loading}
+                onPress={applyCoupon}
+              >
+                {applyingCoupon ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={styles.couponApplyText}>Apply</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {!!couponError && <Text style={styles.couponErrorText}>{couponError}</Text>}
+        </View>
+
         <View style={styles.amountBox}>
           <Text style={styles.amountLabel}>Booking Total</Text>
           <Text style={styles.amountValue}>{formatMoney(total)}</Text>
+
+          {appliedCoupon && (
+            <View style={styles.advanceSummary}>
+              <Text style={[styles.advanceLabel, styles.discountText]}>
+                Coupon Discount
+              </Text>
+              <Text style={[styles.advanceValue, styles.discountText]}>
+                -{formatMoney(appliedCoupon.discountAmount)}
+              </Text>
+            </View>
+          )}
+
+          {appliedCoupon && (
+            <View style={styles.advanceSummary}>
+              <Text style={styles.advanceLabel}>Payable Amount</Text>
+              <Text style={styles.advanceValue}>{formatMoney(discountedTotal)}</Text>
+            </View>
+          )}
 
           {advanceAvailable && (
             <View style={styles.advanceSummary}>
@@ -1027,6 +1182,88 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#111",
     fontWeight: "800",
+  },
+  discountText: {
+    fontSize: 14,
+    color: "#1E8A3C",
+    fontWeight: "800",
+  },
+
+  /* ===== Coupon Box ===== */
+  couponBox: {
+    marginTop: 20,
+    borderRadius: 14,
+    padding: 18,
+    backgroundColor: "#FFFFFF",
+  },
+  couponLabel: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "600",
+    marginBottom: 10,
+  },
+  couponAppliedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#E4F7E9",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  couponAppliedTextBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+    gap: 8,
+  },
+  couponAppliedText: {
+    fontSize: 13,
+    color: "#1E8A3C",
+    fontWeight: "700",
+    flexShrink: 1,
+  },
+  couponRemoveText: {
+    fontSize: 13,
+    color: "#C13333",
+    fontWeight: "800",
+    marginLeft: 12,
+  },
+  couponInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  couponInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: "#111",
+    backgroundColor: "#FAFAFA",
+  },
+  couponApplyBtn: {
+    backgroundColor: "#FF2D75",
+    borderRadius: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 78,
+  },
+  couponApplyText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  couponErrorText: {
+    fontSize: 12,
+    color: "#C13333",
+    fontWeight: "600",
+    marginTop: 8,
   },
   payBtn: {
     marginTop: 35,

@@ -100,7 +100,18 @@ export default function AverageRating() {
             })}
           </View>
 
-          {(!summary || summary.count === 0) && (
+          {summary && summary.count > 0 ? (
+            <TouchableOpacity
+              style={styles.recentReviewsButton}
+              activeOpacity={0.7}
+              onPress={() => router.push('/recent-reviews')}
+            >
+              <Text style={styles.recentReviewsButtonText}>
+                Recent Reviews ({summary.count})
+              </Text>
+              <Feather name="chevron-right" size={18} color="#FF1462" />
+            </TouchableOpacity>
+          ) : (
             <Text style={styles.emptyText}>
               No reviews yet — this fills in once customers start rating completed appointments.
             </Text>
@@ -151,6 +162,18 @@ const styles = StyleSheet.create({
   },
   barFill: { height: '100%', backgroundColor: '#FFB800', borderRadius: 4 },
   distCount: { width: 24, fontSize: 12, color: '#8E8E93', textAlign: 'right' },
+  recentReviewsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 22,
+    paddingVertical: 14,
+    borderRadius: 25,
+    borderWidth: 1.5,
+    borderColor: '#FF1462',
+    gap: 4,
+  },
+  recentReviewsButtonText: { color: '#FF1462', fontWeight: '700', fontSize: 14 },
   emptyText: {
     marginTop: 24,
     fontSize: 13,

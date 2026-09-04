@@ -154,15 +154,33 @@ export default function Bookings() {
         throw new Error(data.message || "Failed to cancel booking");
       }
 
+      // The backend attempts a real Stripe refund for anything actually
+      // paid online before cancelling — reflect its result immediately
+      // instead of waiting on the next refetch, so the payment note
+      // ("Payment: Refunded") and the confirmation alert are both
+      // accurate right away.
+      const refundedAmount: number = data.refund?.refunded ? data.refund.amount : 0;
+
       setBookings((prev) =>
         prev.map((b) =>
           b._id === bookingId
-            ? { ...b, status: "Cancelled", effectiveStatus: "Cancelled", isPast: true }
+            ? {
+                ...b,
+                status: "Cancelled",
+                effectiveStatus: "Cancelled",
+                isPast: true,
+                paymentStatus: data.refund?.refunded ? "Refunded" : b.paymentStatus,
+              }
             : b
         )
       );
 
-      showAlert("Booking Cancelled", "Your booking has been cancelled.");
+      showAlert(
+        "Booking Cancelled",
+        data.refund?.refunded
+          ? `Your booking has been cancelled. LKR ${refundedAmount.toLocaleString()} has been refunded to your original payment method.`
+          : "Your booking has been cancelled."
+      );
     } catch (error) {
       console.log("Cancel booking error:", error);
       showAlert("Error", "Unable to cancel this booking.");
@@ -242,6 +260,20 @@ export default function Bookings() {
     if (status === "Awaiting Completion") return styles.awaitingPill;
     if (status === "Pending") return styles.pendingPill;
     return styles.statusPill;
+  };
+
+  // Matches the staff app's statusColor() text colors exactly (home.tsx,
+  // today-jobs.tsx, upcoming-appointments.tsx, appointment-history.tsx)
+  // so the same status reads with the same color on both sides — the
+  // pill backgrounds above were already shared, but the text itself had
+  // no per-status color at all, so it just fell back to plain black.
+  const getStatusTextColor = (status: string) => {
+    if (status === "Cancelled") return "#C13333";
+    if (status === "Completed") return "#1E8A3C";
+    if (status === "No-show") return "#B9791F";
+    if (status === "Awaiting Completion") return "#8A6D1F";
+    if (status === "Pending") return "#1D5FAB";
+    return "#FF1462";
   };
 
   const openFeedbackModal = (bookingId: string) => {
@@ -400,7 +432,9 @@ export default function Bookings() {
               <View key={booking._id} style={styles.card}>
                 <View style={styles.rowBetween}>
                   <View style={getStatusPillStyle(displayStatus)}>
-                    <Text style={styles.statusText}>{displayStatus}</Text>
+                    <Text style={[styles.statusText, { color: getStatusTextColor(displayStatus) }]}>
+                      {displayStatus}
+                    </Text>
                   </View>
                   <Text style={styles.priceTop}>
                     LKR {booking.totalAmount?.toLocaleString()}
@@ -804,7 +838,7 @@ const styles = StyleSheet.create({
   },
 
   statusPill: {
-    backgroundColor: "#fff",
+    backgroundColor: "#FDE4ED",
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,
@@ -812,7 +846,7 @@ const styles = StyleSheet.create({
   },
 
   completedPill: {
-    backgroundColor: "#eee",
+    backgroundColor: "#E4F7E9",
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,
@@ -836,7 +870,7 @@ const styles = StyleSheet.create({
   },
 
   cancelPill: {
-    backgroundColor: "#eee",
+    backgroundColor: "#FBE4E4",
     paddingHorizontal: 10,
     paddingVertical: 3,
     borderRadius: 6,

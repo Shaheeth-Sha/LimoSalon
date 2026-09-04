@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Animated, Easing } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 
 // Same template as completed.tsx (see the comment there) — the two
 // screens share every bit of chrome (background, ring size, title/
@@ -13,6 +13,8 @@ import { useRouter } from 'expo-router';
 // My Schedule status pills).
 export default function CancelSuccess() {
   const router = useRouter();
+  const { refunded, refundAmount } = useLocalSearchParams<{ refunded?: string; refundAmount?: string }>();
+  const wasRefunded = refunded === 'true' && Number(refundAmount) > 0;
 
   const iconScale = useRef(new Animated.Value(0)).current;
   const checkOpacity = useRef(new Animated.Value(0)).current;
@@ -54,7 +56,9 @@ export default function CancelSuccess() {
           <Text style={styles.title}>Appointment Cancelled</Text>
           <Text style={styles.subtitle}>The slot is open again</Text>
           <Text style={styles.message}>
-            The customer has been notified that their appointment was cancelled.
+            {wasRefunded
+              ? `The customer has been notified, and LKR ${Number(refundAmount).toLocaleString()} was automatically refunded to their original payment method.`
+              : 'The customer has been notified that their appointment was cancelled.'}
           </Text>
 
           <TouchableOpacity

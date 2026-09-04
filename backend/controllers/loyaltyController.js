@@ -3,7 +3,6 @@ const crypto = require("crypto");
 const LoyaltyAccount = require("../models/LoyaltyAccount");
 const Reward = require("../models/Reward");
 const ClaimedReward = require("../models/ClaimedReward");
-const Booking = require("../models/Booking");
 const { createNotification } = require("./notificationController");
 
 // Real-world standard: 1 point per LKR 100 spent, rounded down.
@@ -263,18 +262,16 @@ const claimReward = async (req, res) => {
 };
 
 /* -------------------------------------------------------------------------- */
-/*      Mark a booking Completed — the trigger that awards points            */
+/*           Award points — called when staff marks a booking Completed      */
 /* -------------------------------------------------------------------------- */
 
-// NOTE: this is a deliberate, minimal stand-in. There is no staff-side
-// app yet to genuinely confirm a service happened, so this endpoint
-// exists purely so the loyalty program has a real trigger to hook
-// into now, rather than incorrectly awarding points at booking
-// creation time (which would reward no-shows and cancellations).
-// Once a real staff-side "mark completed" flow exists, that should
-// call awardPointsForBooking() directly instead of duplicating this
-// logic, and this endpoint can either be removed or restricted to
-// staff-only auth.
+// The real trigger for loyalty points: a staff member marking the
+// booking Completed (staffScheduleController.js's updateBookingStatus),
+// never the customer. A customer-facing "mark my own booking completed"
+// endpoint used to live here as a temporary stand-in from before the
+// staff app existed — removed now that the real trigger exists, since
+// leaving it in place would let a customer award themselves points for
+// a visit that never happened.
 const awardPointsForBooking = async (customerId, totalAmount) => {
   const account = await getOrCreateLoyaltyAccount(customerId);
 
@@ -289,89 +286,14 @@ const awardPointsForBooking = async (customerId, totalAmount) => {
 
   await account.save();
 
+  await createNotification({
+    customerId,
+    type: "points_earned",
+    title: "Points Earned",
+    message: `You earned ${earnedPoints} points for your completed appointment.`,
+  });
+
   return { earnedPoints, account, previousTier, tierChanged: previousTier !== account.tier };
-};
-
-const markBookingCompleted = async (req, res) => {
-  try {
-    const customerId = getCustomerId(req);
-    const { bookingId } = req.params;
-
-    if (!customerId) {
-      return res.status(401).json({
-        success: false,
-        message: "Customer authentication is required",
-      });
-    }
-
-    const booking = await Booking.findOne({
-      _id: bookingId,
-      customer: customerId,
-    });
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: "Booking not found",
-      });
-    }
-
-    if (booking.status === "Completed") {
-      return res.status(400).json({
-        success: false,
-        message: "This booking is already marked as completed",
-      });
-    }
-
-    if (booking.status === "Cancelled") {
-      return res.status(400).json({
-        success: false,
-        message: "Cancelled bookings cannot be marked as completed",
-      });
-    }
-
-    booking.status = "Completed";
-    await booking.save();
-
-    const { earnedPoints, account, tierChanged } = await awardPointsForBooking(
-      customerId,
-      booking.totalAmount
-    );
-
-    await createNotification({
-      customerId,
-      type: "points_earned",
-      title: "Points Earned",
-      message: `You earned ${earnedPoints} points for your completed appointment.`,
-      relatedBooking: booking._id,
-    });
-
-    if (tierChanged) {
-      await createNotification({
-        customerId,
-        type: "tier_upgraded",
-        title: "Tier Upgraded!",
-        message: `Congratulations, you've reached ${account.tier} tier!`,
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "Booking marked as completed",
-      earnedPoints,
-      loyalty: {
-        points: account.points,
-        tier: account.tier,
-      },
-    });
-  } catch (error) {
-    console.error("Mark booking completed error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to mark this booking as completed",
-    });
-  }
 };
 
 module.exports = {
@@ -379,6 +301,5 @@ module.exports = {
   getRewards,
   getMyClaimedRewards,
   claimReward,
-  markBookingCompleted,
   awardPointsForBooking,
 };

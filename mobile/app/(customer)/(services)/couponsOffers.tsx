@@ -22,6 +22,7 @@ type Coupon = {
   discountValue: number;
   validUntil: string;
   categories: string[];
+  code?: string | null;
 };
 
 type FilterTab = "All" | "New" | "Expiring Soon";
@@ -40,9 +41,14 @@ export default function CouponsOffers() {
   const [coupons, setCoupons] = useState<Coupon[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const [alert, setAlert] = useState({ visible: false, title: "", message: "" });
-  const showAlert = (title: string, message: string) =>
-    setAlert({ visible: true, title, message });
+  const [alert, setAlert] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    code?: string | null;
+  }>({ visible: false, title: "", message: "" });
+  const showAlert = (title: string, message: string, code?: string | null) =>
+    setAlert({ visible: true, title, message, code });
   const closeAlert = () => setAlert((prev) => ({ ...prev, visible: false }));
 
   const loadCoupons = async () => {
@@ -131,8 +137,12 @@ export default function CouponsOffers() {
                   onPress={() =>
                     showAlert(
                       coupon.title,
-                      coupon.description ||
-                        "Mention this offer to your stylist at your next visit, or apply it at checkout."
+                      coupon.code
+                        ? coupon.description ||
+                            "Enter this code at checkout to apply the discount."
+                        : coupon.description ||
+                            "This offer doesn't have an online code yet — ask your stylist to apply it at your next visit.",
+                      coupon.code
                     )
                   }
                 >
@@ -154,6 +164,11 @@ export default function CouponsOffers() {
             </View>
             <Text style={styles.modalTitle}>{alert.title}</Text>
             <Text style={styles.modalMessage}>{alert.message}</Text>
+            {alert.code ? (
+              <View style={styles.codeChip}>
+                <Text style={styles.codeChipText}>{alert.code}</Text>
+              </View>
+            ) : null}
             <TouchableOpacity style={styles.modalButton} activeOpacity={0.8} onPress={closeAlert}>
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
@@ -201,7 +216,13 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center", marginBottom: 14,
   },
   modalTitle: { fontSize: 17, fontWeight: "bold", color: "#111", marginBottom: 6, textAlign: "center" },
-  modalMessage: { fontSize: 14, color: "#555", textAlign: "center", marginBottom: 22, lineHeight: 20 },
+  modalMessage: { fontSize: 14, color: "#555", textAlign: "center", marginBottom: 16, lineHeight: 20 },
+  codeChip: {
+    backgroundColor: "#FFE1EC", borderRadius: 12, paddingVertical: 10,
+    paddingHorizontal: 20, marginBottom: 22, borderWidth: 1, borderColor: "#FF2D75",
+    borderStyle: "dashed",
+  },
+  codeChipText: { fontSize: 17, fontWeight: "900", color: "#FF2D75", letterSpacing: 1 },
   modalButton: { width: "100%", backgroundColor: "#FF2D75", paddingVertical: 13, borderRadius: 25, alignItems: "center" },
   modalButtonText: { color: "#fff", fontWeight: "bold", fontSize: 15 },
 });

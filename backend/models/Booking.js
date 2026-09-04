@@ -120,6 +120,38 @@ const bookingSchema = new mongoose.Schema(
       min: 0,
     },
 
+    // Fixed: createBooking (bookingController.js) has always computed
+    // and tried to save these three whenever a coupon was applied, but
+    // none of them were declared on this schema — Mongoose's default
+    // strict mode silently drops any field a document is created with
+    // that isn't in the schema, so every coupon-discounted booking's
+    // "how much was saved and with what code" was lost the instant it
+    // was created. totalAmount itself was always correct (it IS a real
+    // field, so the actual charge/amount-due was never wrong), but
+    // there was no lasting record of the discount anywhere — not on
+    // the booking, not in staff's view of it, not on the customer's
+    // own booking history. originalAmount is the pre-discount total
+    // (what the selected services actually add up to); discountAmount
+    // is how much the coupon took off; couponCode is the code that was
+    // used. All three are just informational/audit fields — totalAmount
+    // stays the source of truth for what was actually charged/owed.
+    originalAmount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    discountAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    couponCode: {
+      type: String,
+      default: null,
+    },
+
     paymentOption: {
       type: String,
       enum: ["advance", "full", "salon"],
@@ -193,6 +225,21 @@ const bookingSchema = new mongoose.Schema(
     },
 
     transactionReference: {
+      type: String,
+      default: null,
+    },
+
+    // Set only when refundBookingPayment() (bookingController.js)
+    // actually issues a real Stripe refund on this booking's
+    // stripePaymentIntentId — i.e. paymentStatus just became
+    // "Refunded". Mirrors the paymentVerified/paymentVerifiedAt pair
+    // above so a refund is just as auditable as the original payment.
+    refundedAt: {
+      type: Date,
+      default: null,
+    },
+
+    stripeRefundId: {
       type: String,
       default: null,
     },

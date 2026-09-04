@@ -33,6 +33,8 @@ type ClaimedReward = {
   title: string;
   code: string;
   pointsSpent: number;
+  discountType: string;
+  freeServiceName?: string;
   redeemedAt: string | null;
   expiresAt: string | null;
   createdAt: string;
@@ -123,11 +125,15 @@ export default function MyRewards() {
         throw new Error(data.message || "Unable to claim this reward");
       }
 
+      const isFreeService = confirmClaim.discountType === "freeService";
+
       setConfirmClaim(null);
       await loadAll();
       showAlert(
         "Reward Claimed!",
-        `Your coupon code is ${data.claimedReward.code}. You can view it anytime under the Claimed tab.`,
+        isFreeService
+          ? `Your code is ${data.claimedReward.code}. Show this to your stylist at your next visit to redeem it — free-service rewards can't be applied at online checkout yet.`
+          : `Your coupon code is ${data.claimedReward.code}. Enter it in the coupon field at checkout to apply your discount, or view it anytime under the Claimed tab.`,
         true
       );
     } catch (error: any) {
@@ -220,6 +226,20 @@ export default function MyRewards() {
                     ? ` · Expires ${new Date(claimed.expiresAt).toLocaleDateString()}`
                     : ""}
                 </Text>
+                {/* Fixed: every claimed code used to look interchangeable
+                    here, but a free-service reward can't actually be typed
+                    into the checkout coupon field (there's no online way to
+                    say which selected service should become free) — only
+                    percentage/fixed discounts can. Flagging that here so a
+                    customer doesn't try it at checkout and hit a rejection
+                    with no idea why. */}
+                {!claimed.redeemedAt && (
+                  <Text style={styles.redeemHint}>
+                    {claimed.discountType === "freeService"
+                      ? "Show this code to your stylist in salon to redeem"
+                      : "Enter this code at checkout to apply"}
+                  </Text>
+                )}
               </View>
             ))
           )}
@@ -318,6 +338,7 @@ const styles = StyleSheet.create({
 
   claimedCard: { backgroundColor: "#fff", borderRadius: 14, padding: 16, marginBottom: 12 },
   codeText: { fontSize: 14, fontWeight: "700", color: "#8A1230", marginTop: 4, letterSpacing: 1 },
+  redeemHint: { fontSize: 11, color: "#999", marginTop: 6, fontStyle: "italic" },
 
   modalOverlay: {
     flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "center",

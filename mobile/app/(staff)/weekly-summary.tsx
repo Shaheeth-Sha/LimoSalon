@@ -1,11 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+// SDK 54 moved the classic file-write / Storage Access Framework API
+// (still the right tool for "let the user pick a folder and write a
+// file into it") behind this subpath — the default `expo-file-system`
+// export is the newer File/Directory-class API, which doesn't cover
+// this use case the same way.
+import * as FileSystem from 'expo-file-system/legacy';
 import { BASE_URL } from '../../config/api';
 import AlertModal from '../../components/AlertModal';
 
@@ -164,11 +170,13 @@ export default function WeeklySummary() {
   const maxJobs = summary ? Math.max(1, ...summary.byDay.map((d) => d.jobs)) : 1;
 
   // Both buttons generate the same real PDF from this week's actual
-  // data — Expo's own file-save story on both platforms runs through
-  // the native share sheet anyway (there's no silent "drop this in
-  // Downloads" API without extra storage permissions), so "Download"
-  // and "Share" open the same sheet with a different prompt, exactly
-  // like most real mobile apps do for exporting a report.
+  // data, but they're genuinely different actions now: "Share Report"
+  // opens the OS share sheet (Mail, WhatsApp, AirDrop, etc.), while
+  // "Download PDF" saves the file directly instead — on Android via
+  // the system's native "choose a folder" picker (Storage Access
+  // Framework, not the app-sharing chooser), and on iOS into the
+  // app's own storage since iOS has no public Downloads folder to
+  // write into directly.
   const handleExport = async (mode: 'download' | 'share') => {
     if (!summary || exporting) return;
 
@@ -177,22 +185,80 @@ export default function WeeklySummary() {
     try {
       const canShare = await Sharing.isAvailableAsync();
 
-      if (!canShare) {
-        setAlertState({
-          visible: true,
-          title: 'Not Available',
-          message: "Saving or sharing files isn't supported on this device.",
+      if (mode === 'share') {
+        if (!canShare) {
+          setAlertState({
+            visible: true,
+            title: 'Not Available',
+            message: "Sharing files isn't supported on this device.",
+          });
+          return;
+        }
+
+        const { uri } = await Print.printToFileAsync({ html: buildReportHtml(summary, staffName) });
+
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/pdf',
+          dialogTitle: 'Share Weekly Report',
+          UTI: 'com.adobe.pdf',
         });
         return;
       }
 
+      // mode === 'download'
       const { uri } = await Print.printToFileAsync({ html: buildReportHtml(summary, staffName) });
+      const fileName = `LimoSalon-Weekly-Summary-${summary.weekStart}.pdf`;
 
-      await Sharing.shareAsync(uri, {
-        mimeType: 'application/pdf',
-        dialogTitle: mode === 'download' ? 'Save Weekly Report' : 'Share Weekly Report',
-        UTI: 'com.adobe.pdf',
-      });
+      if (Platform.OS === 'android') {
+        const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+
+        if (!permissions.granted) {
+          if (!canShare) {
+            setAlertState({
+              visible: true,
+              title: 'Download Cancelled',
+              message: 'No folder was chosen, so the report was not saved.',
+            });
+            return;
+          }
+
+          // No save folder chosen — fall back to the share sheet
+          // rather than silently losing the report.
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Save Weekly Report',
+            UTI: 'com.adobe.pdf',
+          });
+          return;
+        }
+
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const destUri = await FileSystem.StorageAccessFramework.createFileAsync(
+          permissions.directoryUri,
+          fileName,
+          'application/pdf'
+        );
+        await FileSystem.writeAsStringAsync(destUri, base64, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        setAlertState({
+          visible: true,
+          title: 'Downloaded',
+          message: 'Weekly report saved to the folder you chose.',
+        });
+      } else {
+        const destUri = `${FileSystem.documentDirectory}${fileName}`;
+        await FileSystem.copyAsync({ from: uri, to: destUri });
+
+        setAlertState({
+          visible: true,
+          title: 'Downloaded',
+          message: 'Weekly report saved. Use Share Report if you want to send it to Files, Mail, or another app.',
+        });
+      }
     } catch (error) {
       console.error('Export weekly report failed:', error);
       setAlertState({

@@ -113,6 +113,8 @@ export default function CardPayment() {
     trialMakeupTime,
     trialHoldId,
     notes,
+    couponCode,
+    couponDiscountAmount,
 
   } = useLocalSearchParams();
 
@@ -150,6 +152,28 @@ export default function CardPayment() {
     Number.isFinite(parsedTotal)
       ? parsedTotal
       : 0;
+
+
+
+  // Display-only: the coupon's discount amount as computed by
+  // payment.tsx when the customer applied it there. This screen never
+  // recomputes or trusts it for the actual charge — create-payment-intent
+  // and createBooking both re-resolve couponCode server-side (see
+  // couponResolver.js) and that resolved amount is what's actually
+  // charged and saved. This is only used so the "Advance"/"Full Payment"
+  // totals shown here match what the customer will really pay.
+  const parsedDiscount =
+    Number(
+      getParamValue(couponDiscountAmount)
+    );
+
+  const discountAmount =
+    Number.isFinite(parsedDiscount) && parsedDiscount > 0
+      ? parsedDiscount
+      : 0;
+
+  const discountedTotal =
+    Math.max(0, total - discountAmount);
 
 
 
@@ -226,9 +250,9 @@ export default function CardPayment() {
   const advanceAmount =
     roundMoney(
       isBridal
-        ? total * 0.2
+        ? discountedTotal * 0.2
         : total >= 10000
-          ? total * 0.1
+          ? discountedTotal * 0.1
           : 0
     );
 
@@ -238,7 +262,7 @@ export default function CardPayment() {
     roundMoney(
       paymentOption === "advance"
         ? advanceAmount
-        : total
+        : discountedTotal
     );
 
 
@@ -346,6 +370,16 @@ export default function CardPayment() {
                   getParamValue(
                     holdId
                   ),
+
+
+                // Resolved server-side against ClaimedReward/Coupon
+                // (couponResolver.js) so the actual Stripe amount
+                // reflects the real discount — never trusted from the
+                // client-computed discountedTotal above.
+                couponCode:
+                  getParamValue(
+                    couponCode
+                  ) || undefined,
 
               }),
 
@@ -613,8 +647,25 @@ export default function CardPayment() {
 
 
 
-                stripePaymentIntentId:
-                  paymentIntentId,
+                // Fixed: this used to be sent as "stripePaymentIntentId",
+                // but bookingController.js's createBooking destructures
+                // req.body.paymentIntentId — the mismatched key meant
+                // the server's local `paymentIntentId` was always
+                // undefined, so every booking saved
+                // stripePaymentIntentId: null regardless of payment
+                // method. The booking itself still worked (paymentStatus
+                // correctly became "Paid"), but with no real payment
+                // intent on file there was nothing for a later refund
+                // (refundBookingPayment in bookingController.js) to
+                // target, so cancelling a genuinely paid booking could
+                // never actually refund it.
+                paymentIntentId,
+
+
+                couponCode:
+                  getParamValue(
+                    couponCode
+                  ) || undefined,
 
 
                 paymentConfirmed:
@@ -686,8 +737,30 @@ export default function CardPayment() {
     getParamValue(bookingType),
 
 
+  // Fixed: this used to always send the client's own `total` (the
+  // original, pre-discount amount computed on this screen), so
+  // bookingSuccess.tsx would show an overstated total whenever a
+  // coupon was applied via card payment — even though the booking
+  // that was actually saved, and the amount actually charged on
+  // Stripe, both correctly reflect the discount. Now it reads back
+  // the real persisted totalAmount, matching the Pay at Salon path in
+  // payment.tsx, which already did this correctly.
   totalAmount:
-    String(total),
+    String(bookingData.booking?.totalAmount ?? total),
+
+  // These three didn't exist on the Booking model until now (see
+  // Booking.js) — the discount was computed just long enough to
+  // charge the right amount, then silently lost. Now they're real,
+  // persisted fields, so bookingSuccess.tsx can show what was
+  // actually saved, not have to guess.
+  originalAmount:
+    String(bookingData.booking?.originalAmount ?? total),
+
+  discountAmount:
+    String(bookingData.booking?.discountAmount || 0),
+
+  couponCode:
+    bookingData.booking?.couponCode || "",
 
 
   advancePayment:
@@ -861,6 +934,17 @@ export default function CardPayment() {
             Total: {formatMoney(total)}
           </Text>
 
+          {discountAmount > 0 && (
+            <>
+              <Text style={[styles.row, styles.discountRow]}>
+                Coupon Discount: -{formatMoney(discountAmount)}
+              </Text>
+              <Text style={styles.row}>
+                Payable Amount: {formatMoney(discountedTotal)}
+              </Text>
+            </>
+          )}
+
 
 
           <TouchableOpacity
@@ -927,7 +1011,7 @@ export default function CardPayment() {
 
 
             <Text>
-              {formatMoney(total)}
+              {formatMoney(discountedTotal)}
             </Text>
 
 
@@ -1073,6 +1157,11 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     fontWeight: "600",
     color: "#333",
+  },
+
+
+  discountRow: {
+    color: "#1E8A3C",
   },
 
 

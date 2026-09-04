@@ -10,6 +10,7 @@ const {
   getMyBookings,
   cancelBooking,
   rescheduleBooking,
+  validateCoupon,
 } = require("../controllers/bookingController");
 
 const {
@@ -30,6 +31,15 @@ router.post(
   "/hold",
   protectCustomer,
   createBookingHold
+);
+
+// New: lets payment.tsx preview a coupon code's real discount before
+// the customer commits to a payment method — see validateCoupon's own
+// comment in bookingController.js.
+router.post(
+  "/validate-coupon",
+  protectCustomer,
+  validateCoupon
 );
 
 router.delete(

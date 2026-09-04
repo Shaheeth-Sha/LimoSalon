@@ -20,6 +20,7 @@ const timeSlotRoutes = require("./routes/timeSlotRoutes");
 const loyaltyRoutes = require("./routes/loyaltyRoutes");
 const couponRoutes = require("./routes/couponRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const adminRoutes = require("./routes/adminRoutes");
 const { startReminderService } = require("./services/reminderService");
 
 const app = express();
@@ -67,6 +68,7 @@ app.use("/api/time-slots", timeSlotRoutes);
 app.use("/api/loyalty", loyaltyRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/admin", adminRoutes);
 
 const PORT = process.env.PORT || 5000;
 

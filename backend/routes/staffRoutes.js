@@ -1,7 +1,13 @@
 const express = require("express");
 const router = express.Router();
 
-const { getStaff } = require("../controllers/staffController");
+const {
+  getStaff,
+  getStaffForAdmin,
+  createStaff,
+  updateStaff,
+  deleteStaff,
+} = require("../controllers/staffController");
 
 const {
   loginStaff,
@@ -12,10 +18,12 @@ const {
   forgotStaffPassword,
   verifyStaffResetOtp,
   resetStaffPassword,
+  inviteStaff,
 } = require("../controllers/staffAuthController");
 
 const {
   getMyBookings,
+  getBookingById,
   updateBookingStatus,
   updateMyAvailability,
   getAvailabilityForDate,
@@ -38,10 +46,22 @@ const {
 } = require("../controllers/notificationController");
 
 const { protectStaff } = require("../middleware/staffAuthMiddleware");
+const { protectAdmin } = require("../middleware/adminAuthMiddleware");
 
 // Public — used by the CUSTOMER app's staff picker (staff.tsx). Left
 // exactly as-is; every route below is new, for the staff portal.
 router.get("/", getStaff);
+
+// Admin — staff roster management. createStaff/updateStaff can also
+// set a password directly (paired with an e-mail contact) for a
+// quick/manual grant. inviteStaff below is the "real world"
+// counterpart — the admin never sees the password at all, they just
+// trigger an e-mail and the staff member sets their own.
+router.get("/admin/all", protectAdmin, getStaffForAdmin);
+router.post("/admin", protectAdmin, createStaff);
+router.put("/admin/:staffId", protectAdmin, updateStaff);
+router.delete("/admin/:staffId", protectAdmin, deleteStaff);
+router.post("/admin/:staffId/invite", protectAdmin, inviteStaff);
 
 // Staff auth
 router.post("/login", loginStaff);
@@ -65,6 +85,7 @@ router.put("/availability/:date", protectStaff, updateAvailabilityForDate);
 
 // A staff member's own schedule
 router.get("/my-bookings", protectStaff, getMyBookings);
+router.get("/bookings/:bookingId", protectStaff, getBookingById);
 router.patch("/bookings/:bookingId/status", protectStaff, updateBookingStatus);
 
 // Dashboard stats — Home stat tiles, Weekly Summary, Top Customer
